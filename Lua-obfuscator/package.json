@@ -1,0 +1,9 @@
+{
+  "name": "proteect-lua-obfuscator",
+  "version": "5.4.0",
+  "description": "Lua obfuscator by Alrect — multi-layer VM protection",
+  "main": "api/obfuscate.js",
+  "scripts": { "start": "node dev-server.js", "dev": "node dev-server.js" },
+  "engines": { "node": ">=16.0.0" },
+  "license": "MIT"
+}
