@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ProteccT — Lua Obfuscator by Alrect</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;700&family=Familjen+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+<div class="scanlines"></div>
+<div class="vignette"></div>
+<canvas id="grid-canvas"></canvas>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="brand">
+      <svg class="brand-icon" width="28" height="28" viewBox="0 0 28 28" fill="none">
+        <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" fill="none" stroke="url(#hexGrad)" stroke-width="1.4"/>
+        <polygon points="14,7 21,11 21,17 14,21 7,17 7,11" fill="none" stroke="url(#hexGrad2)" stroke-width="0.8" opacity="0.5"/>
+        <circle cx="14" cy="14" r="3" fill="url(#hexGrad)"/>
+        <defs>
+          <linearGradient id="hexGrad" x1="2" y1="2" x2="26" y2="26" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ff6b35"/>
+            <stop offset="100%" stop-color="#ff9500"/>
+          </linearGradient>
+          <linearGradient id="hexGrad2" x1="2" y1="2" x2="26" y2="26" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ff6b35"/>
+            <stop offset="100%" stop-color="#ff9500"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">ProteccT</span>
+        <span class="brand-sub">5.4 · by Alrect</span>
+      </div>
+    </div>
+    <div class="topbar-sep"></div>
+    <nav class="topnav">
+      <a href="#obfuscator" class="tnav active">Obfuscator</a>
+      <a href="#pipeline" class="tnav">Pipeline</a>
+      <a href="#docs" class="tnav">Docs</a>
+    </nav>
+  </div>
+  <div class="topbar-right">
+    <div class="status-pill" id="status-pill">
+      <span class="spill-dot idle"></span>
+      <span class="spill-txt" id="spill-txt">Ready</span>
+    </div>
+    <a href="https://github.com" class="gh-btn" target="_blank">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+      </svg>
+      GitHub
+    </a>
+  </div>
+</header>
+
+<section class="hero-strip" id="obfuscator">
+  <div class="hero-content">
+    <div class="hero-badge">
+      <span class="hb-dot"></span>
+      MULTI-LAYER VM OBFUSCATION
+    </div>
+    <h1 class="hero-h1">Protect Lua. <span class="hl-accent">Defy Reverse.</span></h1>
+    <p class="hero-p">5-layer pipeline — rename, encrypt, flatten, virtualize, protect. Every build is unique. Credits embedded. Executor-ready.</p>
+  </div>
+  <div class="hero-stats">
+    <div class="hstat"><span class="hstat-n">5</span><span class="hstat-l">Layers</span></div>
+    <div class="hstat-div"></div>
+    <div class="hstat"><span class="hstat-n">3×</span><span class="hstat-l">VM Depth</span></div>
+    <div class="hstat-div"></div>
+    <div class="hstat"><span class="hstat-n">∞</span><span class="hstat-l">Polymorphic</span></div>
+    <div class="hstat-div"></div>
+    <div class="hstat"><span class="hstat-n">2</span><span class="hstat-l">Modes</span></div>
+  </div>
+</section>
+
+<section class="tool-wrap">
+
+  <div class="mode-bar">
+    <span class="mode-lbl">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+        <circle cx="6" cy="6" r="5" stroke="#ff6b35" stroke-width="1"/>
+        <path d="M6 3.5v3l1.5 1" stroke="#ff6b35" stroke-width="1" stroke-linecap="round"/>
+      </svg>
+      Mode
+    </span>
+    <div class="mode-group">
+      <button class="mode-btn active" data-mode="standard">
+        <span class="mb-dot"></span>
+        <span class="mb-name">Lua Standard</span>
+        <span class="mb-desc">Full • VM • Anti-debug</span>
+      </button>
+      <button class="mode-btn" data-mode="executor">
+        <span class="mb-dot"></span>
+        <span class="mb-name">Executor</span>
+        <span class="mb-desc">Compat • Light VM</span>
+      </button>
+    </div>
+    <div class="mode-chips" id="mode-chips">
+      <div class="chips-row active" data-mode="standard">
+        <span class="chip on">Rename</span>
+        <span class="chip on">Str Encrypt</span>
+        <span class="chip on">Num Encode</span>
+        <span class="chip on">Flow Flatten</span>
+        <span class="chip on">VM Full</span>
+        <span class="chip on">Anti-Debug</span>
+        <span class="chip on">Anti-Dump</span>
+        <span class="chip on">Integrity</span>
+      </div>
+      <div class="chips-row" data-mode="executor">
+        <span class="chip on">Rename</span>
+        <span class="chip on">Str Encrypt</span>
+        <span class="chip off">Num Encode</span>
+        <span class="chip on">Flow Flatten</span>
+        <span class="chip on">VM Light</span>
+        <span class="chip off">Anti-Debug</span>
+        <span class="chip on">Anti-Hook</span>
+        <span class="chip off">Integrity</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="editors">
+
+    <div class="ed-panel" id="input-panel">
+      <div class="ed-header">
+        <div class="ed-htitle">
+          <span class="ed-dot" style="background:#ffd166"></span>
+          <span>Input</span>
+          <span class="ed-lang">Lua</span>
+        </div>
+        <div class="ed-hbtns">
+          <button class="hbtn" id="btn-sample">Sample</button>
+          <button class="hbtn" id="btn-clear">Clear</button>
+          <label class="hbtn upload-lbl">
+            Upload
+            <input type="file" id="file-input" accept=".lua,.txt" style="display:none"/>
+          </label>
+        </div>
+      </div>
+      <div class="ed-body">
+        <div class="line-nums" id="in-ln"></div>
+        <textarea id="in-ed" class="ed-ta" spellcheck="false" autocomplete="off" placeholder="-- paste your Lua script here..."></textarea>
+      </div>
+      <div class="ed-footer">
+        <span id="in-stat" class="ed-fstat">0 lines · 0 chars</span>
+        <span class="ed-hint">Ctrl+Enter to obfuscate</span>
+      </div>
+    </div>
+
+    <div class="center-panel">
+      <div class="obf-btn-wrap">
+        <button id="btn-obf" class="obf-btn">
+          <div class="obf-ring"></div>
+          <div class="obf-inner">
+            <svg class="obf-ico" width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <path d="M13 3C9.134 3 6 6.134 6 10M20 13c0 3.866-3.134 7-7 7M13 3l2-2M13 3l-2-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              <path d="M20 13l2 2M20 13l2-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              <circle cx="13" cy="13" r="4" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+            <span class="obf-lbl">Obfuscate</span>
+          </div>
+          <div class="obf-prog" id="obf-prog"></div>
+        </button>
+        <div class="pipe-track" id="pipe-track">
+          <div class="pt-step" data-i="1"><div class="pts-dot"></div><span>L1</span></div>
+          <div class="pt-sep"></div>
+          <div class="pt-step" data-i="2"><div class="pts-dot"></div><span>L2</span></div>
+          <div class="pt-sep"></div>
+          <div class="pt-step" data-i="3"><div class="pts-dot"></div><span>L3</span></div>
+          <div class="pt-sep"></div>
+          <div class="pt-step" data-i="4"><div class="pts-dot"></div><span>L4</span></div>
+          <div class="pt-sep"></div>
+          <div class="pt-step" data-i="5"><div class="pts-dot"></div><span>L5</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ed-panel" id="output-panel">
+      <div class="ed-header">
+        <div class="ed-htitle">
+          <span class="ed-dot" style="background:#ff6b35"></span>
+          <span>Output</span>
+          <span class="ed-lang" id="out-mode-lbl">Standard</span>
+        </div>
+        <div class="ed-hbtns">
+          <button class="hbtn" id="btn-copy" disabled>Copy</button>
+          <button class="hbtn accent" id="btn-dl" disabled>Download</button>
+        </div>
+      </div>
+      <div class="ed-body" id="out-body">
+        <div class="out-ph" id="out-ph">
+          <div class="oph-icon">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <polygon points="22,4 40,14 40,30 22,40 4,30 4,14" fill="none" stroke="url(#ophGrad)" stroke-width="1.2"/>
+              <circle cx="22" cy="22" r="6" fill="none" stroke="url(#ophGrad)" stroke-width="1.2"/>
+              <circle cx="22" cy="22" r="2" fill="url(#ophGrad)"/>
+              <defs>
+                <linearGradient id="ophGrad" x1="4" y1="4" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#ff6b35" stop-opacity="0.5"/>
+                  <stop offset="100%" stop-color="#ff9500" stop-opacity="0.5"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <p>Output appears here</p>
+          <span>Paste code and click Obfuscate</span>
+        </div>
+        <div class="line-nums" id="out-ln" style="display:none"></div>
+        <textarea id="out-ed" class="ed-ta out-ta" readonly spellcheck="false" style="display:none"></textarea>
+      </div>
+      <div class="ed-footer">
+        <span id="out-stat" class="ed-fstat"></span>
+        <div class="out-tags" id="out-tags"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="statusbar">
+    <div class="sb-left">
+      <div class="sb-dot idle" id="sb-dot"></div>
+      <span id="sb-txt">Ready · Alrect ProteccT 5.4</span>
+    </div>
+    <div class="sb-right">
+      <span id="sb-time"></span>
+      <span class="sb-sep">·</span>
+      <span id="sb-mode">Standard</span>
+      <span class="sb-sep">·</span>
+      <span class="sb-ver">v5.4</span>
+    </div>
+  </div>
+
+</section>
+
+<section class="pipeline-section" id="pipeline">
+  <div class="sec-head">
+    <span class="sec-tag">OBFUSCATION PIPELINE</span>
+    <h2>5 Layers of Defense</h2>
+  </div>
+  <div class="pipeline-cards">
+    <div class="pc-card">
+      <div class="pc-num">01</div>
+      <h3>Code Transformation</h3>
+      <p>All identifiers replaced with randomized alphanumeric names. Variables, functions, parameters — nothing survives.</p>
+      <div class="pc-tags"><span>Rename</span><span>Mangle</span><span>Identifier</span></div>
+    </div>
+    <div class="pc-arrow">→</div>
+    <div class="pc-card">
+      <div class="pc-num">02</div>
+      <h3>Data Protection</h3>
+      <p>Every string encrypted via dual XOR/rotation scheme with per-build random key arrays. Numbers encoded as arithmetic.</p>
+      <div class="pc-tags"><span>XOR</span><span>Rotate</span><span>Encode</span></div>
+    </div>
+    <div class="pc-arrow">→</div>
+    <div class="pc-card">
+      <div class="pc-num">03</div>
+      <h3>Control Flow</h3>
+      <p>Opaque predicates and dead code blocks scattered through code every 8–12 lines, disrupting static analysis.</p>
+      <div class="pc-tags"><span>Flatten</span><span>Dead Code</span><span>Opaque</span></div>
+    </div>
+    <div class="pc-arrow">→</div>
+    <div class="pc-card">
+      <div class="pc-num">04</div>
+      <h3>VM Virtualization</h3>
+      <p>Custom bytecode VM with 34 randomized opcodes, encrypted constant pool, dual-layer VM nesting (main VM + mini VM).</p>
+      <div class="pc-tags"><span>Bytecode</span><span>Opcodes</span><span>2× VM</span></div>
+    </div>
+    <div class="pc-arrow">→</div>
+    <div class="pc-card">
+      <div class="pc-num">05</div>
+      <h3>Runtime Protection</h3>
+      <p>Anti-debug, anti-dump, anti-environment, anti-hook checks. Integrity verification. All injected before execution.</p>
+      <div class="pc-tags"><span>Anti-Debug</span><span>Integrity</span><span>Anti-Hook</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="docs-section" id="docs">
+  <div class="sec-head">
+    <span class="sec-tag">VIRTUAL MACHINE</span>
+    <h2>VM Architecture</h2>
+  </div>
+  <div class="docs-grid">
+    <div class="doc-card">
+      <h4>Primary VM (Layer 4a)</h4>
+      <p>Full Lua instruction set with 34 opcodes: LOADK, MOVE, ADD, SUB, MUL, DIV, CALL, RETURN, FORLOOP, CLOSURE, GETTABLE, SETTABLE, SELF, and more. Opcode table shuffled per build.</p>
+    </div>
+    <div class="doc-card">
+      <h4>Mini VM (Layer 4b)</h4>
+      <p>Secondary lightweight VM wraps the primary VM output. Encrypted with separate key arrays. The VM runtime itself is hidden inside an encrypted payload decoded at runtime.</p>
+    </div>
+    <div class="doc-card">
+      <h4>Encrypted Constant Pool</h4>
+      <p>All constants — strings and numbers — stored in an encrypted pool decoded at runtime. Two decryption functions (XOR + rotation) are randomly assigned per constant.</p>
+    </div>
+    <div class="doc-card">
+      <h4>Polymorphic Builds</h4>
+      <p>New random seed each run → different variable names, XOR keys, opcode mappings, dead code patterns. Two obfuscations of identical source produce completely different output.</p>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="foot-brand">ProteccT <span>5.4</span></div>
+    <p>Lua obfuscator by <strong>Alrect</strong> · Built for script developers who value protection.</p>
+    <div class="foot-links">
+      <a href="https://github.com" target="_blank">GitHub</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#docs">Docs</a>
+    </div>
+  </div>
+</footer>
+
+<div class="toast-wrap" id="toast-wrap">
+  <div class="toast" id="toast"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
