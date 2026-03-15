@@ -1,23 +1,51 @@
 'use strict';
-const { Randomizer } = require('./randomizer');
-class Protections {
-  constructor(rng){this.rng=rng||new Randomizer();}
-  buildAntiHook(rng){
-    const r=rng||this.rng,v1=r.randomName(),v2=r.randomName(),v3=r.randomName(),v4=r.randomName();
-    return `local ${v1}=string.char\nlocal ${v2}=bit32.bxor\nlocal ${v3}=bit32.bor\nlocal ${v4}=bit32.rshift`;
+const {Randomizer}=require('./randomizer');
+const {Compiler}=require('./compiler');
+const {VMCodegen}=require('./vm_codegen');
+
+function buildCredit(mode){
+  const ts=new Date().toISOString().replace('T',' ').slice(0,19);
+  return [
+    `--[[ obfuscator by Alrect proteccT 5.4`,
+    `     Mode    : ${mode==='executor'?'Lua Universal Executor (Luau/Roblox)':'Lua Standard (Multi-Layer VM)'}`,
+    `     Build   : ${ts}`,
+    `     Engine  : Bytecode Compiler + Polymorphic VM`,
+    `     Features:`,
+    `       - Polymorphic opcode map (randomized per build)`,
+    `       - Bytecode as encrypted binary string (not table)`,
+    `       - Per-instruction key mutation + runtime key gen`,
+    `       - Dispatch table VM (not if-elseif)`,
+    `       - VM fragmentation (4 sub-functions)`,
+    `       - Control-flow flattening (state machine)`,
+    `       - Self-modifying VM dispatch`,
+    `       - Fake obfuscator decoy layer`,
+    `       - Anti-HTTPSpy (detect + crash + delete file)`,
+    `       - Anti-Dump (checksum + dispatch swap)`,
+    `       - Anti-Environment (honeypot + FakeEnv + getfenv hook)`,
+    `       - Anti-Debug + Anti-Hook`,
+    `       - Dynamic constant encryption (inline decoders)`,
+    `       - String reconstruction (char-by-char)`,
+    `       - Fake NOP injection`,
+    `       - Register scrambling`,
+    `       - Multi-layer packing (standard mode)`,
+    `--]]`,
+  ].join('\n');
+}
+
+class Obfuscator{
+  constructor(mode){
+    this.mode=mode==='executor'?'executor':'standard';
+    this.rng=new Randomizer();
   }
-  buildDeadCode(rng){
-    const r=rng||this.rng,v1=r.randomName(),v2=r.randomName(),a=r.nextInt(1,999);
-    return r.pick([`if false then local ${v1}=${a} end`,`while false do break end`,`do local ${v1}=nil if ${v1} then local ${v2}=${a} end end`]);
-  }
-  buildOpaque(rng){
-    const r=rng||this.rng,a=r.nextInt(2,20),b=r.nextInt(2,20),v1=r.randomName();
-    return r.pick([`do local ${v1}=${a}*${b} _=${v1} end`,`do local ${v1}=type(bit32) _=${v1} end`]);
-  }
-  buildJunk(rng,n){
-    const r=rng||this.rng,lines=[];
-    for(let i=0;i<(n||2);i++) lines.push(r.next()>0.5?this.buildDeadCode(r):this.buildOpaque(r));
-    return lines.join('\n');
+  obfuscate(src){
+    const compiler=new Compiler();
+    let proto;
+    try{proto=compiler.compile(src);}
+    catch(e){throw new Error(`Compile error: ${e.message}`);}
+    const vmgen=new VMCodegen(this.rng);
+    const code=vmgen.build(proto,this.rng,this.mode);
+    return buildCredit(this.mode)+'\n'+code;
   }
 }
-module.exports = { Protections };
+
+module.exports={Obfuscator};
