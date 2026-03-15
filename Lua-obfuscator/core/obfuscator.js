@@ -13,11 +13,11 @@ const LUA_RESERVED = new Set([
   'assert','collectgarbage','dofile','error','getmetatable','ipairs',
   'load','loadfile','loadstring','next','pairs','pcall','print','rawequal',
   'rawget','rawlen','rawset','require','select','setmetatable','tonumber',
-  'tostring','type','unpack','warn','xpcall',
+  'tostring','type','unpack','warn','xpcall','bit32',
   'coroutine','debug','io','math','os','package','string','table',
   'game','workspace','script','task','wait','spawn','delay',
   'Instance','UDim','UDim2','Vector2','Vector3','CFrame','Color3',
-  'BrickColor','Enum','tick','time','typeof',
+  'BrickColor','Enum','tick','time','typeof','task',
 ]);
 
 function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
@@ -42,38 +42,25 @@ function layer1_rename(code, rng) {
 }
 
 function layer2_encryptStrings(code, rng, encoder) {
-  const xorFn  = rng.randomName();
-  const rotFn  = rng.randomName();
-  const kXor   = rng.randomKeyArray(rng.nextInt(8, 20));
-  const kRot   = rng.randomKeyArray(rng.nextInt(8, 20));
-  const iV=rng.randomName(), sV=rng.randomName(), dV=rng.randomName(), eV=rng.randomName();
+  const xorFn   = rng.randomName();
+  const rotFn   = rng.randomName();
+  const chainFn = rng.randomName();
+  const kXor    = rng.randomKeyArray(rng.nextInt(8, 20));
+  const kRot    = rng.randomKeyArray(rng.nextInt(8, 20));
+  const kChain  = rng.randomKeyArray(rng.nextInt(8, 16));
+  const ck1     = rng.nextInt(1, 254);
+  const ck2     = rng.nextInt(1, 254);
+  const ck3     = rng.nextInt(1, 254);
 
-  const xorDecl = [
-    `local function ${xorFn}(${eV},${iV})`,
-    `local ${sV}=""`,
-    `for ${dV}=1,#${eV} do`,
-    `${sV}=${sV}..string.char(${eV}[${dV}]~${iV}[((${dV}-1)%#${iV})+1])`,
-    `end`,
-    `return ${sV}`,
-    `end`,
-  ].join('\n');
+  const xorDecl   = encoder.buildXorDecryptor(xorFn, rng);
+  const rotDecl   = encoder.buildRotDecryptor(rotFn, rng);
+  const chainDecl = encoder.buildChainDecryptor(chainFn, ck1, ck2, ck3, rng);
 
-  const iV2=rng.randomName(), sV2=rng.randomName(), dV2=rng.randomName(), eV2=rng.randomName(), tV=rng.randomName();
-  const rotDecl = [
-    `local function ${rotFn}(${eV2},${iV2})`,
-    `local ${sV2}=""`,
-    `for ${dV2}=1,#${eV2} do`,
-    `local ${tV}=(${eV2}[${dV2}]-${iV2}[((${dV2}-1)%#${iV2})+1]+256)%256`,
-    `${sV2}=${sV2}..string.char(${tV})`,
-    `end`,
-    `return ${sV2}`,
-    `end`,
-  ].join('\n');
+  const kXorVar   = rng.randomName();
+  const kRotVar   = rng.randomName();
+  const kChainVar = rng.randomName();
 
-  const kXorVar = rng.randomName();
-  const kRotVar = rng.randomName();
   let counter = 0;
-
   const replaced = code.replace(/"((?:[^"\\]|\\.)*?)"|'((?:[^'\\]|\\.)*?)'/g, (match, g1, g2) => {
     const raw = g1 !== undefined ? g1 : g2;
     const str = raw
@@ -82,23 +69,26 @@ function layer2_encryptStrings(code, rng, encoder) {
     if (str.length === 0) return '""';
 
     counter++;
-    if (rng.next() > 0.5) {
-      const enc = [];
-      for (let i = 0; i < str.length; i++) enc.push((str.charCodeAt(i) ^ kXor[i % kXor.length]) & 0xFF);
+    const method = rng.nextInt(0, 2);
+    if (method === 0) {
+      const enc = encoder.xorEncrypt(str, kXor);
       return `${xorFn}({${enc.join(',')}},${kXorVar})`;
-    } else {
-      const enc = [];
-      for (let i = 0; i < str.length; i++) enc.push((str.charCodeAt(i) + kRot[i % kRot.length]) & 0xFF);
+    } else if (method === 1) {
+      const enc = encoder.rotEncrypt(str, kRot);
       return `${rotFn}({${enc.join(',')}},${kRotVar})`;
+    } else {
+      const enc = encoder.chainEncrypt(str, kChain, ck1, ck2, ck3);
+      return `${chainFn}({${enc.join(',')}},${kChainVar})`;
     }
   });
 
   if (counter === 0) return code;
 
   const header = [
-    xorDecl, rotDecl,
+    xorDecl, rotDecl, chainDecl,
     `local ${kXorVar}={${kXor.join(',')}}`,
     `local ${kRotVar}={${kRot.join(',')}}`,
+    `local ${kChainVar}={${kChain.join(',')}}`,
   ].join('\n') + '\n';
 
   return header + replaced;
@@ -107,7 +97,7 @@ function layer2_encryptStrings(code, rng, encoder) {
 function layer2b_encodeNumbers(code, rng, encoder) {
   return code.replace(/\b(\d+)\b/g, (match, num) => {
     const n = parseInt(num, 10);
-    if (n < 0 || n > 9999 || rng.next() > 0.55) return match;
+    if (n < 0 || n > 9999 || rng.next() > 0.5) return match;
     return encoder.obfuscateNumber(n, rng);
   });
 }
@@ -115,19 +105,25 @@ function layer2b_encodeNumbers(code, rng, encoder) {
 function layer3_controlFlow(code, rng, prot) {
   const lines = code.split('\n');
   const out = [];
+  let counter = 0;
   for (let i = 0; i < lines.length; i++) {
     out.push(lines[i]);
-    if (i > 0 && i % 8 === 0 && rng.next() > 0.45) out.push(prot.buildDeadCode(rng));
-    if (i > 0 && i % 12 === 0 && rng.next() > 0.55) out.push(prot.buildOpaquePredicate(rng));
+    counter++;
+    if (counter % 7 === 0 && rng.next() > 0.4) out.push(prot.buildDeadCode(rng));
+    if (counter % 11 === 0 && rng.next() > 0.5) out.push(prot.buildOpaquePredicate(rng));
   }
   return out.join('\n');
 }
 
-function layer4_vm(code, vmBuilder, rng) {
+function layer4a_vm(code, vmBuilder, rng) {
   return vmBuilder.wrapInVM(code, rng);
 }
 
-function layer4b_miniVMWrap(code, vmBuilder, rng) {
+function layer4b_tableVM(code, vmBuilder, rng) {
+  return vmBuilder.buildTableVM(code, rng);
+}
+
+function layer4c_miniVM(code, vmBuilder, rng) {
   return vmBuilder.buildMiniVM(code, rng);
 }
 
@@ -136,14 +132,14 @@ function layer5_protections(code, mode, prot, rng) {
   return header + '\n' + code;
 }
 
-function buildCreditBlock(mode) {
-  const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
+function buildCredit(mode) {
+  const ts = new Date().toISOString().replace('T',' ').slice(0,19);
   return [
     `--[[ obfuscator by Alrect proteccT 5.4`,
-    `     Mode    : ${mode === 'executor' ? 'Lua Universal Executor' : 'Lua Standard'}`,
+    `     Mode    : ${mode==='executor'?'Lua Universal Executor':'Lua Standard'}`,
     `     Build   : ${ts}`,
-    `     Layers  : Rename + StrEncrypt + ControlFlow + VM + RuntimeProt`,
-    `     VM      : Custom bytecode · Encrypted pool · Rand opcodes`,
+    `     Layers  : Rename · StrEncrypt · ControlFlow · VM(x3) · Runtime`,
+    `     Compat  : Luau · Roblox · Delta · KRNL · Standard Lua`,
     `--]]`,
   ].join('\n');
 }
@@ -170,14 +166,15 @@ class Obfuscator {
 
     code = layer3_controlFlow(code, this.rng, this.prot);
 
-    code = layer4_vm(code, this.vm, this.rng);
+    code = layer4a_vm(code, this.vm, this.rng);
 
-    code = layer4b_miniVMWrap(code, this.vm, this.rng);
+    code = layer4b_tableVM(code, this.vm, this.rng);
+
+    code = layer4c_miniVM(code, this.vm, this.rng);
 
     code = layer5_protections(code, this.mode, this.prot, this.rng);
 
-    const credit = buildCreditBlock(this.mode);
-    return credit + '\n' + code;
+    return buildCredit(this.mode) + '\n' + code;
   }
 }
 
