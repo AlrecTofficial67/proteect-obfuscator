@@ -12,9 +12,9 @@ class Protections {
     const a = r.nextInt(2, 30), b = r.nextInt(2, 30);
     const v1 = r.randomName(), v2 = r.randomName();
     const variants = [
-      `do local ${v1}=${a} local ${v2}=${b} if not(${v1}*${v2}==${a*b}) then error("") end end`,
-      `do local ${v1}=${a+b} if ${v1}~=${a+b} then error("") end end`,
-      `do local ${v1}=type(tostring)=="function" if not ${v1} then error("") end end`,
+      `do local ${v1}=${a} local ${v2}=${b} local _=${v1}*${v2} end`,
+      `do local ${v1}=${a+b} local _=${v1}+0 end`,
+      `do local ${v1}=type(tostring) local _=${v1} end`,
     ];
     return r.pick(variants);
   }
