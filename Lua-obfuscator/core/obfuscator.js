@@ -40,11 +40,68 @@ function layer1_rename(code, rng) {
   return result;
 }
 
+// Heavy multi-step encryption for executor mode
+function layer2_encryptStringsHeavy(code, rng, encoder) {
+  const decls = [];
+  const kGlobal = rng.randomKeyArray(rng.nextInt(8, 16));
+  const seed    = rng.nextInt(1, 254);
+  const decFn   = rng.randomName();
+  const kVar    = rng.randomName();
+  const decl    = encoder.buildHeavyDecryptor(decFn, kGlobal, seed, rng);
+  decls.push(decl);
+
+  // Also build XOR and ROT for variety/confusion
+  const xorFn  = rng.randomName();
+  const rotFn  = rng.randomName();
+  const kXor   = rng.randomKeyArray(rng.nextInt(8, 16));
+  const kRot   = rng.randomKeyArray(rng.nextInt(8, 16));
+  const kXorV  = rng.randomName();
+  const kRotV  = rng.randomName();
+  decls.push(encoder.buildXorDecryptor(xorFn, rng));
+  decls.push(encoder.buildRotDecryptor(rotFn, rng));
+
+  let counter = 0;
+  const replaced = code.replace(/"((?:[^"\\]|\\.)*?)"|'((?:[^'\\]|\\.)*?)'/g, (match, g1, g2) => {
+    const raw = g1 !== undefined ? g1 : g2;
+    const str = raw
+      .replace(/\\n/g,'\n').replace(/\\t/g,'\t').replace(/\\r/g,'\r')
+      .replace(/\\\\/g,'\\').replace(/\\"/g,'"').replace(/\\'/g,"'");
+    if (str.length === 0) return '""';
+    counter++;
+
+    // Randomly pick encryption method
+    const method = rng.nextInt(0, 2);
+    if (method === 0) {
+      // Heavy multi-step - hardest to reverse
+      const enc = encoder.heavyEncrypt(str, kGlobal, seed);
+      return `${decFn}({${enc.join(',')}})`;
+    } else if (method === 1) {
+      // XOR
+      const enc = encoder.xorEncrypt(str, kXor);
+      return `${xorFn}({${enc.join(',')}},${kXorV})`;
+    } else {
+      // Rotation
+      const enc = encoder.rotEncrypt(str, kRot);
+      return `${rotFn}({${enc.join(',')}},${kRotV})`;
+    }
+  });
+
+  if (counter === 0) return code;
+
+  return [
+    ...decls,
+    `local ${kXorV}={${kXor.join(',')}}`,
+    `local ${kRotV}={${kRot.join(',')}}`,
+    replaced,
+  ].join('\n');
+}
+
+// Standard string encryption (for non-executor)
 function layer2_encryptStrings(code, rng, encoder) {
   const xorFn = rng.randomName();
   const rotFn = rng.randomName();
-  const kXor  = rng.randomKeyArray(rng.nextInt(6, 12));
-  const kRot  = rng.randomKeyArray(rng.nextInt(6, 12));
+  const kXor  = rng.randomKeyArray(rng.nextInt(8, 16));
+  const kRot  = rng.randomKeyArray(rng.nextInt(8, 16));
   const kXorV = rng.randomName();
   const kRotV = rng.randomName();
 
@@ -60,16 +117,14 @@ function layer2_encryptStrings(code, rng, encoder) {
     if (str.length === 0) return '""';
     counter++;
     if (rng.next() > 0.5) {
-      return `${xorFn}({${encoder.xorEncrypt(str, kXor).join(',')}},${kXorV})`;
+      return `${xorFn}({${encoder.xorEncrypt(str,kXor).join(',')}},${kXorV})`;
     } else {
-      return `${rotFn}({${encoder.rotEncrypt(str, kRot).join(',')}},${kRotV})`;
+      return `${rotFn}({${encoder.rotEncrypt(str,kRot).join(',')}},${kRotV})`;
     }
   });
 
   if (counter === 0) return code;
-
-  return [
-    xorDecl, rotDecl,
+  return [xorDecl, rotDecl,
     `local ${kXorV}={${kXor.join(',')}}`,
     `local ${kRotV}={${kRot.join(',')}}`,
     replaced,
@@ -84,6 +139,7 @@ function layer2b_encodeNumbers(code, rng, encoder) {
   });
 }
 
+// Layer 3: control flow - scatter junk between lines
 function layer3_controlFlow(code, rng, prot) {
   const lines = code.split('\n');
   const out = [];
@@ -92,9 +148,23 @@ function layer3_controlFlow(code, rng, prot) {
     out.push(lines[i]);
     counter++;
     if (counter % 9 === 0 && rng.next() > 0.5) out.push(prot.buildDeadCode(rng));
-    if (counter % 14 === 0 && rng.next() > 0.55) out.push(prot.buildOpaquePredicate(rng));
   }
   return out.join('\n');
+}
+
+// Layer: variable indirection table (makes reverse engineering harder)
+function layerIndirection(code, rng) {
+  const tblName = rng.randomName();
+  const entries = [];
+  const fnNames = ['string.char','string.byte','string.len','string.sub','math.floor','math.abs','tostring','tonumber','type','pcall','pairs','ipairs','select','unpack','bit32.bxor','bit32.bor','bit32.rshift','bit32.lshift'];
+  const mapped = {};
+  fnNames.forEach((fn, i) => {
+    const key = rng.nextInt(100, 999);
+    mapped[fn] = key;
+    entries.push(`[${key}]=${fn}`);
+  });
+  const tblDecl = `local ${tblName}={${entries.join(',')}}`;
+  return { tblDecl, tblName, mapped };
 }
 
 function buildCredit(mode) {
@@ -121,20 +191,24 @@ class Obfuscator {
   obfuscate(src) {
     let code = src;
 
+    // Layer 1: rename all identifiers
     code = layer1_rename(code, this.rng);
-    code = layer2_encryptStrings(code, this.rng, this.enc);
 
-    if (this.mode === 'standard') {
+    if (this.mode === 'executor') {
+      // Executor: heavy encrypt + flow, NO loadstring/load/VM
+      code = layer2_encryptStringsHeavy(code, this.rng, this.enc);
+      code = layer3_controlFlow(code, this.rng, this.prot);
+      const junk = this.prot.buildJunkChain(this.rng, 2);
+      code = junk + '\n' + code;
+    } else {
+      // Standard: full pipeline with VM
+      code = layer2_encryptStrings(code, this.rng, this.enc);
       code = layer2b_encodeNumbers(code, this.rng, this.enc);
       code = layer3_controlFlow(code, this.rng, this.prot);
       code = this.vm.wrapInVM(code, this.rng);
       code = this.vm.buildMiniVM(code, this.rng);
       const header = this.prot.buildFullHeader('standard', code, this.rng);
       code = header + '\n' + code;
-    } else {
-      code = layer3_controlFlow(code, this.rng, this.prot);
-      const junk = this.prot.buildJunkChain(this.rng, 2);
-      code = junk + '\n' + code;
     }
 
     return buildCredit(this.mode) + '\n' + code;
