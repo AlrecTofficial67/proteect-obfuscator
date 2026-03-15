@@ -43,8 +43,8 @@ function layer1_rename(code, rng) {
 function layer2_encryptStrings(code, rng, encoder) {
   const xorFn = rng.randomName();
   const rotFn = rng.randomName();
-  const kXor  = rng.randomKeyArray(rng.nextInt(8, 16));
-  const kRot  = rng.randomKeyArray(rng.nextInt(8, 16));
+  const kXor  = rng.randomKeyArray(rng.nextInt(6, 12));
+  const kRot  = rng.randomKeyArray(rng.nextInt(6, 12));
   const kXorV = rng.randomName();
   const kRotV = rng.randomName();
 
@@ -60,29 +60,26 @@ function layer2_encryptStrings(code, rng, encoder) {
     if (str.length === 0) return '""';
     counter++;
     if (rng.next() > 0.5) {
-      const enc = encoder.xorEncrypt(str, kXor);
-      return `${xorFn}({${enc.join(',')}},${kXorV})`;
+      return `${xorFn}({${encoder.xorEncrypt(str, kXor).join(',')}},${kXorV})`;
     } else {
-      const enc = encoder.rotEncrypt(str, kRot);
-      return `${rotFn}({${enc.join(',')}},${kRotV})`;
+      return `${rotFn}({${encoder.rotEncrypt(str, kRot).join(',')}},${kRotV})`;
     }
   });
 
   if (counter === 0) return code;
 
-  const header = [
+  return [
     xorDecl, rotDecl,
     `local ${kXorV}={${kXor.join(',')}}`,
     `local ${kRotV}={${kRot.join(',')}}`,
-  ].join('\n') + '\n';
-
-  return header + replaced;
+    replaced,
+  ].join('\n');
 }
 
 function layer2b_encodeNumbers(code, rng, encoder) {
   return code.replace(/(?<![.\w])\b([1-9]\d{0,3})\b(?!\s*[=.])/g, (match, num) => {
     const n = parseInt(num, 10);
-    if (rng.next() > 0.45) return match;
+    if (rng.next() > 0.4) return match;
     return encoder.obfuscateNumber(n, rng);
   });
 }
@@ -94,15 +91,15 @@ function layer3_controlFlow(code, rng, prot) {
   for (let i = 0; i < lines.length; i++) {
     out.push(lines[i]);
     counter++;
-    if (counter % 8 === 0 && rng.next() > 0.5) out.push(prot.buildDeadCode(rng));
-    if (counter % 13 === 0 && rng.next() > 0.55) out.push(prot.buildOpaquePredicate(rng));
+    if (counter % 9 === 0 && rng.next() > 0.5) out.push(prot.buildDeadCode(rng));
+    if (counter % 14 === 0 && rng.next() > 0.55) out.push(prot.buildOpaquePredicate(rng));
   }
   return out.join('\n');
 }
 
 function buildCredit(mode) {
   const ts = new Date().toISOString().replace('T',' ').slice(0,19);
-  const modeLabel = (mode === 'executor') ? 'Lua Universal Executor (Luau/Roblox)' : 'Lua Standard';
+  const modeLabel = mode === 'executor' ? 'Lua Universal Executor (Luau/Roblox)' : 'Lua Standard';
   return [
     `--[[ obfuscator by Alrect proteccT 5.4`,
     `     Mode  : ${modeLabel}`,
@@ -125,7 +122,6 @@ class Obfuscator {
     let code = src;
 
     code = layer1_rename(code, this.rng);
-
     code = layer2_encryptStrings(code, this.rng, this.enc);
 
     if (this.mode === 'standard') {
@@ -133,12 +129,16 @@ class Obfuscator {
     }
 
     code = layer3_controlFlow(code, this.rng, this.prot);
-
     code = this.vm.wrapInVM(code, this.rng);
-
     code = this.vm.buildMiniVM(code, this.rng);
 
-    code = this.prot.buildFullHeader(this.mode, code, this.rng) + '\n' + code;
+    if (this.mode === 'standard') {
+      const header = this.prot.buildFullHeader('standard', code, this.rng);
+      code = header + '\n' + code;
+    } else {
+      const junk = this.prot.buildJunkChain(this.rng, 2);
+      code = junk + '\n' + code;
+    }
 
     return buildCredit(this.mode) + '\n' + code;
   }
