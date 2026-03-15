@@ -126,16 +126,13 @@ class Obfuscator {
 
     if (this.mode === 'standard') {
       code = layer2b_encodeNumbers(code, this.rng, this.enc);
-    }
-
-    code = layer3_controlFlow(code, this.rng, this.prot);
-    code = this.vm.wrapInVM(code, this.rng);
-    code = this.vm.buildMiniVM(code, this.rng);
-
-    if (this.mode === 'standard') {
+      code = layer3_controlFlow(code, this.rng, this.prot);
+      code = this.vm.wrapInVM(code, this.rng);
+      code = this.vm.buildMiniVM(code, this.rng);
       const header = this.prot.buildFullHeader('standard', code, this.rng);
       code = header + '\n' + code;
     } else {
+      code = layer3_controlFlow(code, this.rng, this.prot);
       const junk = this.prot.buildJunkChain(this.rng, 2);
       code = junk + '\n' + code;
     }
