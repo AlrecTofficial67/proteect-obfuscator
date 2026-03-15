@@ -1,95 +1,89 @@
 'use strict';
 const { Randomizer }  = require('./randomizer');
-const { Encoder }     = require('./encoder');
-const { VMBuilder }   = require('./vm_builder');
+const { Compiler }    = require('./compiler');
+const { VMCodegen }   = require('./vm_codegen');
 const { Protections } = require('./protections');
-const { generateHardObfuscated } = require('./codegen');
 
-const LUA_RESERVED = new Set([
-  'and','break','do','else','elseif','end','false','for','function','goto','if','in',
-  'local','nil','not','or','repeat','return','then','true','until','while',
-  '_G','_ENV','_VERSION','assert','collectgarbage','dofile','error','getmetatable',
-  'ipairs','load','loadfile','loadstring','next','pairs','pcall','print','rawequal',
-  'rawget','rawlen','rawset','require','select','setmetatable','tonumber','tostring',
-  'type','unpack','warn','xpcall','bit32','coroutine','debug','io','math','os',
-  'package','string','table','game','workspace','script','task','wait','spawn',
-  'delay','Instance','UDim','UDim2','Vector2','Vector3','CFrame','Color3','BrickColor',
-  'Enum','tick','time','typeof',
-]);
-
-function escRe(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
-
-function layer1_rename(code, rng) {
-  const map=new Map(), seen=new Set();
-  const re=/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g; let m;
-  while((m=re.exec(code))!==null){ const id=m[1]; if(!LUA_RESERVED.has(id)&&id.length>=2) seen.add(id); }
-  seen.forEach(id=>map.set(id,rng.randomName()));
-  let result=code;
-  for(const[orig,rep] of map) result=result.replace(new RegExp(`(?<![\\w'"])\\b${escRe(orig)}\\b(?![\\w'"])`, 'g'),rep);
-  return result;
+function obsN(n, rng) {
+  const a=rng.nextInt(100000,999999);
+  return rng.pick([`${n+a}+(-${a})`,`-${a-n}+${a}`]);
 }
 
-// Standard string encryption (for standard/VM mode)
-function layer2_encryptStrings(code,rng,encoder){
-  const xorFn=rng.randomName(),rotFn=rng.randomName();
-  const kXor=rng.randomKeyArray(rng.nextInt(8,16)),kRot=rng.randomKeyArray(rng.nextInt(8,16));
-  const kXorV=rng.randomName(),kRotV=rng.randomName();
-  const xorDecl=encoder.buildXorDecryptor(xorFn,rng);
-  const rotDecl=encoder.buildRotDecryptor(rotFn,rng);
-  let cnt=0;
-  const rep=code.replace(/"((?:[^"\\]|\\.)*?)"|'((?:[^'\\]|\\.)*?)'/g,(match,g1,g2)=>{
-    const raw=g1!==undefined?g1:g2;
-    const str=raw.replace(/\\n/g,'\n').replace(/\\t/g,'\t').replace(/\\r/g,'\r').replace(/\\\\/g,'\\').replace(/\\"/g,'"').replace(/\\'/g,"'");
-    if(str.length===0) return '""';
-    cnt++;
-    if(rng.next()>0.5) return `${xorFn}({${encoder.xorEncrypt(str,kXor).join(',')}},${kXorV})`;
-    return `${rotFn}({${encoder.rotEncrypt(str,kRot).join(',')}},${kRotV})`;
-  });
-  if(cnt===0) return code;
-  return [xorDecl,rotDecl,`local ${kXorV}={${kXor.join(',')}}`,`local ${kRotV}={${kRot.join(',')}}`,rep].join('\n');
-}
-
-function layer3_flow(code,rng,prot){
-  const lines=code.split('\n'),out=[];
-  for(let i=0;i<lines.length;i++){
-    out.push(lines[i]);
-    if((i+1)%9===0&&rng.next()>0.5) out.push(prot.buildDeadCode(rng));
-    if((i+1)%15===0&&rng.next()>0.5) out.push(prot.buildOpaque(rng));
+// Pack the VM output into an encrypted string payload
+function packIntoEncryptedPayload(vmCode, rng) {
+  const keys = rng.randomKeyArray(rng.nextInt(10,18));
+  const seed  = rng.nextInt(1,254);
+  const enc   = [];
+  let state   = seed;
+  for(let i=0;i<vmCode.length;i++){
+    let b = (vmCode.charCodeAt(i) ^ keys[i%keys.length]) & 0xFF;
+    b = (b ^ state) & 0xFF;
+    state = (state*17 + b + i) & 0xFF;
+    enc.push(b);
   }
-  return out.join('\n');
+  const ev=rng.randomName(),kv=rng.randomName(),fn=rng.randomName();
+  const iv=rng.randomName(),sv=rng.randomName(),bv=rng.randomName();
+  const stv=rng.randomName(),fv=rng.randomName(),erv=rng.randomName();
+  return [
+    `local ${ev}={${enc.join(',')}}`,
+    `local ${kv}={${keys.join(',')}}`,
+    `local function ${fn}()`,
+    `local ${sv}="" local ${stv}=${seed}`,
+    `for ${iv}=1,#${ev} do`,
+    `local ${bv}=bit32.bxor(${ev}[${iv}],${kv}[((${iv}-1)%#${kv})+1])`,
+    `${bv}=bit32.bxor(${bv},${stv})`,
+    `${stv}=(${stv}*17+${ev}[${iv}]+(${iv}-1))%256`,
+    `${sv}=${sv}..string.char(${bv})`,
+    `end`,
+    `local ${fv},${erv}=(loadstring or load)(${sv})`,
+    `return ${fv} and ${fv}() or error(tostring(${erv}))`,
+    `end`,
+    `${fn}()`,
+  ].join('\n');
 }
 
-function buildCredit(mode){
-  const ts=new Date().toISOString().replace('T',' ').slice(0,19);
-  const ml=mode==='executor'?'Lua Universal Executor (Luau/Roblox)':'Lua Standard';
-  return `--[[ obfuscator by Alrect proteccT 5.4\n     Mode  : ${ml}\n     Build : ${ts}\n     Compat: Luau, Roblox, Delta, KRNL\n--]]`;
+function buildCredit(mode) {
+  const ts = new Date().toISOString().replace('T',' ').slice(0,19);
+  const ml = mode==='executor'?'Lua Universal Executor (Luau/Roblox)':'Lua Standard (VM Bytecode)';
+  return `--[[ obfuscator by Alrect proteccT 5.4\n     Mode  : ${ml}\n     Build : ${ts}\n     Engine: Custom Bytecode Compiler + VM Interpreter\n     Opcodes: ${Object.keys(require('./compiler').OP).length} (randomized per build)\n--]]`;
 }
 
 class Obfuscator {
   constructor(mode){
-    this.mode=mode==='executor'?'executor':'standard';
-    this.rng=new Randomizer();
-    this.enc=new Encoder(this.rng);
-    this.vm=new VMBuilder(this.rng);
-    this.prot=new Protections(this.rng);
+    this.mode = mode==='executor'?'executor':'standard';
+    this.rng  = new Randomizer();
+    this.prot = new Protections(this.rng);
   }
 
-  obfuscate(src){
-    if(this.mode==='executor'){
-      // WeAreDev-style: string table with decimal escapes + XOR decode + shuffle trick
-      return generateHardObfuscated(src, this.rng);
-    } else {
-      // Standard: rename + string encrypt + VM pipeline
-      let code=src;
-      code=layer1_rename(code,this.rng);
-      code=layer2_encryptStrings(code,this.rng,this.enc);
-      code=layer3_flow(code,this.rng,this.prot);
-      code=this.vm.wrapInVM(code,this.rng);
-      code=this.vm.buildPackedLayer(code,this.rng);
-      const hdr=this.prot.buildFullHeader('standard',code,this.rng);
-      code=hdr+'\n'+code;
-      return buildCredit(this.mode)+'\n'+code;
+  obfuscate(src) {
+    // Step 1: Compile Lua source → custom bytecode proto
+    const compiler = new Compiler();
+    let proto;
+    try {
+      proto = compiler.compile(src);
+    } catch(e) {
+      throw new Error(`Compile error: ${e.message}`);
     }
+
+    // Step 2: Generate VM + encrypted bytecode
+    const vmgen = new VMCodegen(this.rng);
+    const vmCode = vmgen.build(proto, this.rng);
+
+    let code;
+    if(this.mode === 'executor') {
+      // Executor: NO loadstring wrapper (Roblox LocalScript blocks it)
+      // Instead: inline VM runtime directly, no outer load()
+      code = vmCode;
+    } else {
+      // Standard: wrap VM code in encrypted payload (loadstring/load)
+      code = packIntoEncryptedPayload(vmCode, this.rng);
+    }
+
+    // Step 3: Add anti-hook captures
+    const antiHook = this.prot.buildAntiHook(this.rng);
+    code = antiHook + '\n' + code;
+
+    return buildCredit(this.mode) + '\n' + code;
   }
 }
 
