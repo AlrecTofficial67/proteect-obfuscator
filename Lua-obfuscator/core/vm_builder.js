@@ -10,6 +10,14 @@ const OP_NAMES = [
   'NEWTABLE','SETLIST','GETUPVAL','SETUPVAL','SELF',
 ];
 
+function xorEncryptPayload(str, keys) {
+  const out = [];
+  for (let i = 0; i < str.length; i++) {
+    out.push((str.charCodeAt(i) ^ keys[i % keys.length]) & 0xFF);
+  }
+  return out;
+}
+
 class VMBuilder {
   constructor(rng) {
     this.rng = rng || new Randomizer();
@@ -23,8 +31,6 @@ class VMBuilder {
     OP_NAMES.forEach((n, i) => { map[n] = vals[i]; });
     return map;
   }
-
-  op(name) { return this.opcodeMap[name]; }
 
   buildVMRuntime(rng) {
     const r = rng || this.rng;
@@ -53,160 +59,95 @@ class VMBuilder {
     L.push(`local ${aA}=${tmpA}[2]`);
     L.push(`local ${bA}=${tmpA}[3]`);
     L.push(`local ${cA}=${tmpA}[4]`);
-
     L.push(`if ${opA}==${om.LOADK} then`);
     L.push(`${regA}[${aA}]=${constA}[${bA}]`);
-
     L.push(`elseif ${opA}==${om.LOADNIL} then`);
     L.push(`for _i=${aA},${bA} do ${regA}[_i]=nil end`);
-
     L.push(`elseif ${opA}==${om.LOADBOOL} then`);
     L.push(`${regA}[${aA}]=(${bA}~=0)`);
     L.push(`if ${cA}~=0 then ${ipA}=${ipA}+1 end`);
-
     L.push(`elseif ${opA}==${om.MOVE} then`);
     L.push(`${regA}[${aA}]=${regA}[${bA}]`);
-
     L.push(`elseif ${opA}==${om.GETUPVAL} then`);
     L.push(`${regA}[${aA}]=${upvA}[${bA}]`);
-
     L.push(`elseif ${opA}==${om.SETUPVAL} then`);
     L.push(`${upvA}[${bA}]=${regA}[${aA}]`);
-
     L.push(`elseif ${opA}==${om.GETGLOBAL} then`);
     L.push(`${regA}[${aA}]=${envA}[${constA}[${bA}]]`);
-
     L.push(`elseif ${opA}==${om.SETGLOBAL} then`);
     L.push(`${envA}[${constA}[${bA}]]=${regA}[${aA}]`);
-
     L.push(`elseif ${opA}==${om.GETTABLE} then`);
-    L.push(`local _t=${regA}[${bA}]`);
-    L.push(`local _k=${RK(cA)}`);
-    L.push(`${regA}[${aA}]=_t[_k]`);
-
+    L.push(`local _t=${regA}[${bA}] local _k=${RK(cA)} ${regA}[${aA}]=_t[_k]`);
     L.push(`elseif ${opA}==${om.SETTABLE} then`);
-    L.push(`local _t=${regA}[${aA}]`);
-    L.push(`local _k=${RK(bA)}`);
-    L.push(`local _v=${RK(cA)}`);
-    L.push(`_t[_k]=_v`);
-
+    L.push(`local _t=${regA}[${aA}] local _k=${RK(bA)} local _v=${RK(cA)} _t[_k]=_v`);
     L.push(`elseif ${opA}==${om.SELF} then`);
-    L.push(`local _obj=${regA}[${bA}]`);
-    L.push(`${regA}[${aA}+1]=_obj`);
-    L.push(`${regA}[${aA}]=_obj[${RK(cA)}]`);
-
-    L.push(`elseif ${opA}==${om.ADD} then`);
-    L.push(`${regA}[${aA}]=${RK(bA)}+${RK(cA)}`);
-
-    L.push(`elseif ${opA}==${om.SUB} then`);
-    L.push(`${regA}[${aA}]=${RK(bA)}-${RK(cA)}`);
-
-    L.push(`elseif ${opA}==${om.MUL} then`);
-    L.push(`${regA}[${aA}]=${RK(bA)}*${RK(cA)}`);
-
-    L.push(`elseif ${opA}==${om.DIV} then`);
-    L.push(`${regA}[${aA}]=${RK(bA)}/${RK(cA)}`);
-
-    L.push(`elseif ${opA}==${om.MOD} then`);
-    L.push(`${regA}[${aA}]=${RK(bA)}%${RK(cA)}`);
-
-    L.push(`elseif ${opA}==${om.POW} then`);
-    L.push(`${regA}[${aA}]=${RK(bA)}^${RK(cA)}`);
-
+    L.push(`local _obj=${regA}[${bA}] ${regA}[${aA}+1]=_obj ${regA}[${aA}]=_obj[${RK(cA)}]`);
+    L.push(`elseif ${opA}==${om.ADD} then ${regA}[${aA}]=${RK(bA)}+${RK(cA)}`);
+    L.push(`elseif ${opA}==${om.SUB} then ${regA}[${aA}]=${RK(bA)}-${RK(cA)}`);
+    L.push(`elseif ${opA}==${om.MUL} then ${regA}[${aA}]=${RK(bA)}*${RK(cA)}`);
+    L.push(`elseif ${opA}==${om.DIV} then ${regA}[${aA}]=${RK(bA)}/${RK(cA)}`);
+    L.push(`elseif ${opA}==${om.MOD} then ${regA}[${aA}]=${RK(bA)}%${RK(cA)}`);
+    L.push(`elseif ${opA}==${om.POW} then ${regA}[${aA}]=${RK(bA)}^${RK(cA)}`);
     L.push(`elseif ${opA}==${om.CONCAT} then`);
-    L.push(`local _s=""`);
-    L.push(`for _i=${bA},${cA} do _s=_s..tostring(${regA}[_i]) end`);
-    L.push(`${regA}[${aA}]=_s`);
-
-    L.push(`elseif ${opA}==${om.UNM} then`);
-    L.push(`${regA}[${aA}]=-${regA}[${bA}]`);
-
-    L.push(`elseif ${opA}==${om.NOT} then`);
-    L.push(`${regA}[${aA}]=not ${regA}[${bA}]`);
-
-    L.push(`elseif ${opA}==${om.LEN} then`);
-    L.push(`${regA}[${aA}]=#${regA}[${bA}]`);
-
+    L.push(`local _s="" for _i=${bA},${cA} do _s=_s..tostring(${regA}[_i]) end ${regA}[${aA}]=_s`);
+    L.push(`elseif ${opA}==${om.UNM} then ${regA}[${aA}]=-${regA}[${bA}]`);
+    L.push(`elseif ${opA}==${om.NOT} then ${regA}[${aA}]=not ${regA}[${bA}]`);
+    L.push(`elseif ${opA}==${om.LEN} then ${regA}[${aA}]=#${regA}[${bA}]`);
     L.push(`elseif ${opA}==${om.EQ} then`);
     L.push(`if (${RK(bA)}==${RK(cA)})~=(${aA}~=0) then ${ipA}=${ipA}+1 end`);
-
     L.push(`elseif ${opA}==${om.LT} then`);
     L.push(`if (${RK(bA)}<${RK(cA)})~=(${aA}~=0) then ${ipA}=${ipA}+1 end`);
-
     L.push(`elseif ${opA}==${om.LE} then`);
     L.push(`if (${RK(bA)}<=${RK(cA)})~=(${aA}~=0) then ${ipA}=${ipA}+1 end`);
-
-    L.push(`elseif ${opA}==${om.JMP} then`);
-    L.push(`${ipA}=${ipA}+${aA}`);
-
+    L.push(`elseif ${opA}==${om.JMP} then ${ipA}=${ipA}+${aA}`);
     L.push(`elseif ${opA}==${om.TEST} then`);
     L.push(`if (not not ${regA}[${aA}])~=(${cA}~=0) then ${ipA}=${ipA}+1 end`);
-
     L.push(`elseif ${opA}==${om.CALL} then`);
-    L.push(`local _fn=${regA}[${aA}]`);
-    L.push(`local _args={}`);
+    L.push(`local _fn=${regA}[${aA}] local _args={}`);
     L.push(`for _i=1,${bA}-1 do _args[_i]=${regA}[${aA}+_i] end`);
     L.push(`local _res={_fn(table.unpack(_args))}`);
     L.push(`for _i=1,${cA}-1 do ${regA}[${aA}+_i-1]=_res[_i] end`);
     L.push(`${topA}=${aA}+(${cA}-1)`);
-
     L.push(`elseif ${opA}==${om.RETURN} then`);
     L.push(`local ${retA}={}`);
-    L.push(`if ${bA}==0 then`);
-    L.push(`for _i=${aA},${topA} do ${retA}[#${retA}+1]=${regA}[_i] end`);
-    L.push(`else`);
-    L.push(`for _i=0,${bA}-2 do ${retA}[#${retA}+1]=${regA}[${aA}+_i] end`);
-    L.push(`end`);
+    L.push(`if ${bA}==0 then for _i=${aA},${topA} do ${retA}[#${retA}+1]=${regA}[_i] end`);
+    L.push(`else for _i=0,${bA}-2 do ${retA}[#${retA}+1]=${regA}[${aA}+_i] end end`);
     L.push(`return table.unpack(${retA})`);
-
     L.push(`elseif ${opA}==${om.FORPREP} then`);
-    L.push(`${regA}[${aA}]=${regA}[${aA}]-${regA}[${aA}+2]`);
-    L.push(`${ipA}=${ipA}+${bA}`);
-
+    L.push(`${regA}[${aA}]=${regA}[${aA}]-${regA}[${aA}+2] ${ipA}=${ipA}+${bA}`);
     L.push(`elseif ${opA}==${om.FORLOOP} then`);
     L.push(`${regA}[${aA}]=${regA}[${aA}]+${regA}[${aA}+2]`);
     L.push(`if (${regA}[${aA}+2]>0 and ${regA}[${aA}]<=${regA}[${aA}+1]) or (${regA}[${aA}+2]<0 and ${regA}[${aA}]>=${regA}[${aA}+1]) then`);
-    L.push(`${regA}[${aA}+3]=${regA}[${aA}]`);
-    L.push(`${ipA}=${ipA}+${bA}`);
-    L.push(`end`);
-
-    L.push(`elseif ${opA}==${om.NEWTABLE} then`);
-    L.push(`${regA}[${aA}]={}`);
-
+    L.push(`${regA}[${aA}+3]=${regA}[${aA}] ${ipA}=${ipA}+${bA} end`);
+    L.push(`elseif ${opA}==${om.NEWTABLE} then ${regA}[${aA}]={}`);
     L.push(`elseif ${opA}==${om.SETLIST} then`);
-    L.push(`local _t=${regA}[${aA}]`);
-    L.push(`for _i=1,${bA} do _t[_i+(${cA}-1)*50]=${regA}[${aA}+_i] end`);
-
+    L.push(`local _t=${regA}[${aA}] for _i=1,${bA} do _t[_i+(${cA}-1)*50]=${regA}[${aA}+_i] end`);
     L.push(`elseif ${opA}==${om.CLOSURE} then`);
-    L.push(`local _subp=${protoA}[3][${bA}]`);
-    L.push(`${regA}[${aA}]=function(...)`);
-    L.push(`return ${vmFn}(_subp,${upvA},${envA})`);
-    L.push(`end`);
-
-    L.push(`elseif ${opA}==${om.VARARG} then`);
-    L.push(`end`);
-    L.push(`end`);
-    L.push(`end`);
-    L.push(`return ${execFn}()`);
-    L.push(`end`);
+    L.push(`local _subp=${protoA}[3][${bA}] ${regA}[${aA}]=function(...) return ${vmFn}(_subp,${upvA},${envA}) end`);
+    L.push(`elseif ${opA}==${om.VARARG} then end`);
+    L.push(`end end`);
+    L.push(`return ${execFn}() end`);
 
     return { code: L.join('\n'), vmFnName: vmFn };
   }
 
   wrapInVM(luaSource, rng) {
     const r = rng || this.rng;
-    const { code: vmCode, vmFnName } = this.buildVMRuntime(r);
+    const { code: vmCode } = this.buildVMRuntime(r);
+    const keys1 = r.randomKeyArray(r.nextInt(8, 16));
+    const keys2 = r.randomKeyArray(r.nextInt(6, 12));
 
-    const keys1 = r.randomKeyArray(r.nextInt(12, 24));
-    const keys2 = r.randomKeyArray(r.nextInt(8, 16));
     const encrypted = [];
     for (let i = 0; i < luaSource.length; i++) {
-      encrypted.push((luaSource.charCodeAt(i) ^ keys1[i % keys1.length] ^ keys2[i % keys2.length]) & 0xFF);
+      const b = luaSource.charCodeAt(i);
+      const k1 = keys1[i % keys1.length];
+      const k2 = keys2[i % keys2.length];
+      encrypted.push((b ^ k1 ^ k2) & 0xFF);
     }
 
-    const decFn=r.randomName(),k1V=r.randomName(),k2V=r.randomName();
-    const payV=r.randomName(),iV=r.randomName(),sV=r.randomName();
-    const bV=r.randomName(),fnV=r.randomName(),errV=r.randomName();
+    const decFn=r.randomName(), k1V=r.randomName(), k2V=r.randomName();
+    const payV=r.randomName(), iV=r.randomName(), sV=r.randomName();
+    const bV=r.randomName(), fnV=r.randomName(), errV=r.randomName();
 
     const L = [];
     L.push(vmCode);
@@ -229,14 +170,13 @@ class VMBuilder {
 
   buildMiniVM(snippet, rng) {
     const r = rng || this.rng;
-    const keys = r.randomKeyArray(r.nextInt(8, 18));
-    const encrypted = [];
-    for (let i = 0; i < snippet.length; i++) {
-      encrypted.push((snippet.charCodeAt(i) ^ keys[i % keys.length]) & 0xFF);
-    }
-    const fn=r.randomName(),kV=r.randomName(),eV=r.randomName();
-    const iV=r.randomName(),sV=r.randomName(),bV=r.randomName();
-    const fV=r.randomName(),erV=r.randomName();
+    const keys = r.randomKeyArray(r.nextInt(8, 16));
+    const encrypted = xorEncryptPayload(snippet, keys);
+
+    const fn=r.randomName(), kV=r.randomName(), eV=r.randomName();
+    const iV=r.randomName(), sV=r.randomName(), bV=r.randomName();
+    const fV=r.randomName(), erV=r.randomName();
+
     return [
       `local function ${fn}(${eV},${kV})`,
       `local ${sV}=""`,
@@ -248,35 +188,6 @@ class VMBuilder {
       `return ${fV} and ${fV}() or error(tostring(${erV}))`,
       `end`,
       `${fn}({${encrypted.join(',')}},{${keys.join(',')}})`,
-    ].join('\n');
-  }
-
-  buildTableVM(snippet, rng) {
-    const r = rng || this.rng;
-    const tblName = r.randomName();
-    const keys = r.randomKeyArray(r.nextInt(6, 14));
-    const k2 = r.nextInt(1, 254);
-    const encrypted = [];
-    for (let i = 0; i < snippet.length; i++) {
-      const b = (snippet.charCodeAt(i) ^ keys[i % keys.length] ^ k2) & 0xFF;
-      encrypted.push(b);
-    }
-    const fn=r.randomName(),iV=r.randomName(),sV=r.randomName(),bV=r.randomName();
-    const fV=r.randomName(),erV=r.randomName(),kV=r.randomName();
-    return [
-      `local ${tblName}={${encrypted.join(',')}}`,
-      `local ${kV}={${keys.join(',')}}`,
-      `local function ${fn}()`,
-      `local ${sV}=""`,
-      `for ${iV}=1,#${tblName} do`,
-      `local ${bV}=bit32.bxor(${tblName}[${iV}],${kV}[((${iV}-1)%#${kV})+1])`,
-      `${bV}=bit32.bxor(${bV},${k2})`,
-      `${sV}=${sV}..string.char(${bV})`,
-      `end`,
-      `local ${fV},${erV}=load(${sV})`,
-      `return ${fV} and ${fV}() or error(tostring(${erV}))`,
-      `end`,
-      `${fn}()`,
     ].join('\n');
   }
 }
