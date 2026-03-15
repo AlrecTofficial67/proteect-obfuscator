@@ -163,7 +163,7 @@ class VMBuilder {
     L.push(`end`);
     L.push(`return ${sV}`);
     L.push(`end`);
-    L.push(`local ${fnV},${errV}=load(${decFn}())`);
+    L.push(`local ${fnV},${errV}=(loadstring or load)(${decFn}())`);
     L.push(`if ${fnV} then return ${fnV}() else error(tostring(${errV})) end`);
 
     return L.join('\n');
@@ -187,7 +187,7 @@ class VMBuilder {
       `local ${bV}=bit32.bxor(${eV}[${iV}],${kV}[((${iV}-1)%#${kV})+1])`,
       `${sV}=${sV}..string.char(${bV})`,
       `end`,
-      `local ${fV},${erV}=load(${sV})`,
+      `local ${fV},${erV}=(loadstring or load)(${sV})`,
       `return ${fV} and ${fV}() or error(tostring(${erV}))`,
       `end`,
       `${fn}()`,
