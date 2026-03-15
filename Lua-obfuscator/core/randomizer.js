@@ -2,11 +2,13 @@
 
 class Randomizer {
   constructor(seed) {
-    this.seed = seed || (Math.floor(Math.random() * 0xFFFFFFFF) >>> 0);
+    this.seed = (seed || (Math.floor(Math.random() * 0xFFFFFFFF))) >>> 0;
   }
 
   next() {
-    this.seed = (Math.imul(1664525, this.seed) + 1013904223) >>> 0;
+    let s = this.seed;
+    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+    this.seed = s >>> 0;
     return this.seed / 0x100000000;
   }
 
@@ -17,16 +19,10 @@ class Randomizer {
   randomName(minLen, maxLen) {
     const alpha = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
     const alnum = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_';
-    const len = this.nextInt(minLen || 8, maxLen || 18);
+    const len = this.nextInt(minLen || 10, maxLen || 20);
     let name = alpha[this.nextInt(0, alpha.length - 1)];
     for (let i = 1; i < len; i++) name += alnum[this.nextInt(0, alnum.length - 1)];
     return name;
-  }
-
-  randomBytes(len) {
-    const b = [];
-    for (let i = 0; i < len; i++) b.push(this.nextInt(0, 255));
-    return b;
   }
 
   randomKeyArray(len) {
@@ -43,9 +39,7 @@ class Randomizer {
     return arr;
   }
 
-  pick(arr) {
-    return arr[this.nextInt(0, arr.length - 1)];
-  }
+  pick(arr) { return arr[this.nextInt(0, arr.length - 1)]; }
 }
 
 module.exports = { Randomizer };
