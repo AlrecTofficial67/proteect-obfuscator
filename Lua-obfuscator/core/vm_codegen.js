@@ -16,27 +16,19 @@ function oS(s){
 class VMCodegen{
   constructor(rng){
     this.rng=rng||new Randomizer();
-    // ── Polymorphic opcode map (Point 1 & 14) ──
     this.opMap=this._buildOpMap();
-    // Per-instruction encoding keys
     this.iKeyOp=this.rng.nextInt(1,254);
     this.iKeyA=this.rng.nextInt(1,254);
     this.iKeyB=this.rng.nextInt(1,254);
     this.iKeyC=this.rng.nextInt(1,254);
     this.mutF=this.rng.nextInt(1,13);
-    // Runtime key seeds (Point: Runtime Key Generation)
     this.rtKeySeed=this.rng.nextInt(1,254);
     this.rtKeyMul=this.rng.nextInt(3,37);
     this.rtKeyXor=this.rng.nextInt(1,254);
-    // Constant pool keys
     this.constKeys=this.rng.randomKeyArray(this.rng.nextInt(14,24));
     this.constSeed=this.rng.nextInt(1,254);
-    // Register scramble map (Point 8)
     this.regMap=this._buildRegMap();
-    // Fake opcode table for anti-dump (Point 11)
     this.fakeOps=this._buildFakeOps();
-    // VM fragmentation: split dispatch into sub-functions (Point 15)
-    this.fragCount=this.rng.nextInt(3,5);
   }
 
   _buildOpMap(){
@@ -49,89 +41,71 @@ class VMCodegen{
   }
 
   _buildRegMap(){
-    // Map logical register 0..63 to scrambled physical register
     const regs=Array.from({length:64},(_,i)=>i);
     this.rng.shuffle(regs);
     return regs;
   }
 
   _buildFakeOps(){
-    // Generate fake opcode values that look real but are never executed
-    const fakes=[];
-    for(let i=0;i<12;i++) fakes.push(this.rng.nextInt(200,255));
-    return fakes;
+    const f=[];
+    for(let i=0;i<8;i++)f.push(this.rng.nextInt(200,254));
+    return f;
   }
 
-  // ── Point 6: Runtime Key Generation ──
-  // Key for position `pos` derived from runtime state, not hardcoded
   buildRTKeyFn(rng){
     const r=rng||this.rng;
     const fn=r.randomName(),pV=r.randomName(),sV=r.randomName();
-    const seed=this.rtKeySeed,mul=this.rtKeyMul,xk=this.rtKeyXor;
+    const mul=this.rtKeyMul,xk=this.rtKeyXor;
     return {
       fn,
       code:`local function ${fn}(${pV},${sV}) return bit32.bxor((${pV}*${oN(mul,r)}+${sV})%256,${oN(xk,r)}) end`
     };
   }
 
-  // ── Point 3: Instruction mutation — packed bitfield encoding ──
   encodeInstr(op,a,b,c,pos){
     const mk=(k,p)=>(((k^(p*this.mutF))&0xFF)||1);
-    // Pack: apply per-position key + runtime key seed XOR
-    const encOp=(((this.opMap[op]||0)^mk(this.iKeyOp,pos))^(pos&0xFF))&0xFF;
-    const encA=(((a+128)&0xFF)^mk(this.iKeyA,pos))&0xFF;
-    const encB=(((b+128)&0xFF)^mk(this.iKeyB,pos))&0xFF;
-    const encC=(((c+128)&0xFF)^mk(this.iKeyC,pos))&0xFF;
-    // Extra mutation: each byte XORed with seed rolled by position
     const roll=(this.rtKeySeed*(pos+1))&0xFF;
-    return [encOp^roll,encA^(roll>>1&0xFF),encB^(roll>>2&0xFF),encC^(roll>>3&0xFF)].map(x=>x&0xFF);
+    const encOp=(((this.opMap[op]||0)^mk(this.iKeyOp,pos))^(pos&0xFF)^roll)&0xFF;
+    const encA=(((a+128)&0xFF)^mk(this.iKeyA,pos)^((roll>>1)&0xFF))&0xFF;
+    const encB=(((b+128)&0xFF)^mk(this.iKeyB,pos)^((roll>>2)&0xFF))&0xFF;
+    const encC=(((c+128)&0xFF)^mk(this.iKeyC,pos)^((roll>>3)&0xFF))&0xFF;
+    return [encOp,encA,encB,encC];
   }
 
-  // ── Point 9: Bytecode packing — store as encrypted binary string ──
   serializeBytecodeStr(instrs,rng){
     const r=rng||this.rng;
     const bytes=[];
-    const fakeRate=r.nextInt(4,9);
+    const fakeRate=r.nextInt(5,10);
     for(let i=0;i<instrs.length;i++){
-      // ── Point 6: Fake NOP injection ──
       if(i>0&&i%fakeRate===0){
-        const fb=this.encodeInstr(OP.NOP,r.nextInt(0,5),r.nextInt(0,5),r.nextInt(0,5),bytes.length/4);
-        fb.forEach(b=>bytes.push(b));
+        this.encodeInstr(OP.NOP,r.nextInt(0,3),r.nextInt(0,3),r.nextInt(0,3),bytes.length/4).forEach(b=>bytes.push(b));
       }
       const{op,a,b,c}=instrs[i];
       this.encodeInstr(op,a,b,c,bytes.length/4).forEach(b=>bytes.push(b));
     }
-    // ── Byte shuffle pass ──
-    const shuffleKey=r.randomKeyArray(r.nextInt(8,16));
+    const shuffleKey=r.randomKeyArray(r.nextInt(8,14));
     const shuffled=bytes.map((b,i)=>(b^shuffleKey[i%shuffleKey.length])&0xFF);
-    // Store as escaped string
     let s='"';
     for(const b of shuffled)s+=`\\${b.toString().padStart(3,'0')}`;
     return {str:s+'"',shuffleKey};
   }
 
-  // ── Point 4: Dynamic constant encryption ──
   encryptConst(val,idx,rng){
     const r=rng||this.rng;
     if(typeof val==='number'){
       const k=(this.constKeys[idx%this.constKeys.length]^(idx*7)^this.constSeed)&0xFF;
       const enc=(Math.floor(Math.abs(val))^k)&0xFFFFFF;
-      const magic=r.nextInt(1,200);
       const sign=val<0?'-':'';
       return `${sign}bit32.bxor(${oN(enc,r)},${oN(k,r)})`;
     }
     if(typeof val==='string'){
-      // ── Point 13: String reconstruction — char by char ──
       const parts=[];
       for(let i=0;i<val.length;i++){
         const k=(this.constKeys[(idx+i)%this.constKeys.length]^(i*5+idx)^this.constSeed)&0xFF;
         const enc=(val.charCodeAt(i)^k)&0xFF;
-        const iV=r.randomName(),kV=r.randomName();
         parts.push(`string.char(bit32.bxor(${oN(enc,r)},${oN(k,r)}))`);
       }
-      // Split into random-sized groups joined with ..
-      const groups=[];
-      let gi=0;
+      const groups=[];let gi=0;
       while(gi<parts.length){
         const sz=r.nextInt(1,Math.min(4,parts.length-gi));
         groups.push(parts.slice(gi,gi+sz).join('..'));
@@ -142,110 +116,112 @@ class VMCodegen{
     return 'nil';
   }
 
-  // ── Anti-HTTPSpy: detect httpspy files and crash executor ──
+  // ── FIXED Anti-HTTPSpy: NO infinite loop unless spy is actually detected ──
   buildAntiHTTPSpy(rng){
     const r=rng||this.rng;
     const N=()=>r.randomName();
-    const checkFn=N(),fileFn=N(),crashFn=N(),detectedV=N(),pathV=N();
+    const checkFn=N(),crashFn=N(),pathV=N(),spyHookFn=N();
     const spyFiles=[
       'HttpSpy','httpspy','Http_Spy','HttpLogger','HttpMonitor',
-      'httplogger','http_spy','httpspy.lua','HttpSpy.lua',
-      'HttpMonitor.lua','http_logger','synapse_http_spy',
+      'httplogger','http_spy','HttpSpy.lua','HttpMonitor.lua',
+      'http_logger','synapse_http_spy','synapse_spy',
     ];
     const L=[];
-    // Crash function: lag server + disconnect + delete file
+
+    // Crash function — only runs when spy IS detected
+    // NO infinite loop — instead: corrupt env + kick + task.wait abuse
     L.push(`local function ${crashFn}(${pathV})`);
-    L.push(`-- Detected HTTPSpy, initiating countermeasures`);
-    L.push(`local _t=tick and tick() or 0`);
-    L.push(`local _game=game`);
-    // Infinite loop to lag
-    L.push(`spawn(function()`);
-    L.push(`local _s=0 while true do _s=_s+1 end end)`);
-    // Disconnect
-    L.push(`spawn(function()`);
-    L.push(`wait(0.1)`);
-    L.push(`if _game and _game.Players then`);
-    L.push(`local _lp=_game.Players.LocalPlayer`);
-    L.push(`if _lp then _lp:Kick(${oS('Connection terminated')}) end end end)`);
-    // Try to delete spy file
-    L.push(`spawn(function()`);
-    L.push(`local _ok,_writefile=pcall(function() return writefile end)`);
-    L.push(`if _ok and type(_writefile)=="function" then`);
-    L.push(`pcall(_writefile,${pathV},"") end`);
-    L.push(`local _ok2,_delfile=pcall(function() return delfile end)`);
-    L.push(`if _ok2 and type(_delfile)=="function" then`);
-    L.push(`pcall(_delfile,${pathV}) end end)`);
-    L.push(`error("") end`);
-    // Detection function: check for spy files
+    L.push(`local _g=game local _lp`);
+    L.push(`pcall(function() _lp=_g.Players.LocalPlayer end)`);
+    // Kick player
+    L.push(`if _lp then pcall(function() _lp:Kick(${oS('Script protection triggered')}) end) end`);
+    // Overwrite spy file content with garbage
+    L.push(`pcall(function()`);
+    L.push(`if writefile then writefile(tostring(${pathV}),${oS('--corrupted')}) end`);
+    L.push(`if delfile then delfile(tostring(${pathV})) end`);
+    L.push(`end)`);
+    // task.delay crash (not infinite loop - just delayed error)
+    L.push(`if task then task.delay(0,function() error(${oS('')}) end)`);
+    L.push(`else spawn(function() error(${oS('')}) end) end`);
+    L.push(`end`);
+
+    // Check files — runs ONCE at startup, NOT in a loop
     L.push(`local function ${checkFn}()`);
-    L.push(`local _ok,_listfiles=pcall(function() return listfiles end)`);
-    L.push(`if not _ok or type(_listfiles)~="function" then return end`);
-    L.push(`local _ok2,_files=pcall(_listfiles,${oS('')})`);
-    L.push(`if not _ok2 or type(_files)~="table" then`);
-    // Also check workspace folder
-    L.push(`_ok2,_files=pcall(_listfiles,${oS('workspace')})`);
-    L.push(`if not _ok2 then return end end`);
-    // Check each file
-    L.push(`for _,_f in ipairs(_files or {}) do`);
+    L.push(`local _ok,_lf=pcall(function() return listfiles end)`);
+    L.push(`if not _ok or type(_lf)~="function" then return end`);
+    L.push(`local _ok2,_files=pcall(_lf,${oS('')})`);
+    L.push(`if not _ok2 then _ok2,_files=pcall(_lf,${oS('.')}) end`);
+    L.push(`if not _ok2 or type(_files)~="table" then return end`);
+    L.push(`for _,_f in ipairs(_files) do`);
     L.push(`local _fl=tostring(_f):lower()`);
     spyFiles.forEach(sf=>{
-      L.push(`if _fl:find(${oS(sf.toLowerCase())}) then ${crashFn}(_f) end`);
+      L.push(`if _fl:find(${oS(sf.toLowerCase())},1,true) then ${crashFn}(_f) return end`);
     });
-    // Check for generic spy patterns
-    L.push(`if _fl:find(${oS('spy')}) or _fl:find(${oS('hook')}) or _fl:find(${oS('logger')}) then`);
-    L.push(`${crashFn}(_f) end`);
+    L.push(`if _fl:find(${oS('spy')},1,true) and _fl:find(${oS('http')},1,true) then`);
+    L.push(`${crashFn}(_f) return end`);
     L.push(`end end`);
-    // Also hook HttpService to detect spy
-    L.push(`local function ${fileFn}()`);
-    L.push(`local _ok,_hs=pcall(function()`);
-    L.push(`return game:GetService(${oS('HttpService')}) end)`);
+
+    // Hook HttpService.RequestAsync to detect spy hooking it
+    L.push(`local function ${spyHookFn}()`);
+    L.push(`local _ok,_hs=pcall(function() return game:GetService(${oS('HttpService')}) end)`);
     L.push(`if not _ok or not _hs then return end`);
-    L.push(`local _origReq=_hs.RequestAsync`);
-    L.push(`if type(_origReq)~="function" then return end`);
-    // Check if RequestAsync has been hooked
+    L.push(`local _ok2,_req=pcall(function() return _hs.RequestAsync end)`);
+    L.push(`if not _ok2 or type(_req)~="function" then return end`);
+    // Check if function was hooked (not a C function)
     L.push(`local _ok3,_info=pcall(function()`);
-    L.push(`return debug and debug.getinfo and debug.getinfo(_origReq,"S") end)`);
-    L.push(`if _ok3 and _info and _info.what~="C" then`);
-    L.push(`${crashFn}(${oS('httpspy_detected')}) end end`);
+    L.push(`return debug and debug.getinfo and debug.getinfo(_req,${oS('S')}) end)`);
+    L.push(`if _ok3 and _info and type(_info)=="table" then`);
+    L.push(`if _info.what~=${oS('C')} then ${crashFn}(${oS('httpspy_hook')}) end end end`);
+
+    // Run checks ONCE — no periodic loop
     L.push(`pcall(${checkFn})`);
-    L.push(`pcall(${fileFn})`);
-    // Periodic check
-    L.push(`if spawn then spawn(function()`);
-    L.push(`while true do wait(${oN(2,r)}) pcall(${checkFn}) pcall(${fileFn}) end`);
+    L.push(`pcall(${spyHookFn})`);
+
+    // Periodic check with task.delay (NOT while true) — checks every 30s, lightweight
+    L.push(`if task then`);
+    L.push(`local function _schedCheck()`);
+    L.push(`task.delay(30,function() pcall(${checkFn}) _schedCheck() end)`);
+    L.push(`end _schedCheck()`);
+    L.push(`elseif spawn then`);
+    L.push(`spawn(function()`);
+    L.push(`while wait(30) do pcall(${checkFn}) end`); // wait(30) not wait(0.5) — no fps hit
     L.push(`end) end`);
+
     return L.join('\n');
   }
 
-  // ── Anti-Dump: checksum VM + anti-hook dispatch ──
-  buildAntiDump(rng,dispTblName,constName){
+  // ── Anti-Dump: checksum + dispatch verification ──
+  buildAntiDump(rng,dispTblName){
     const r=rng||this.rng;
     const N=()=>r.randomName();
-    const checksumV=N(),expectedV=N(),swapFn=N(),verifyFn=N();
-    const cs=r.nextInt(10000,99999);
+    const verifyFn=N(),swapFn=N();
+    const expectedSize=Object.keys(OP).length;
     const L=[];
-    // Random swap fake opcodes in dispatch table (Point 11: anti-dump via random dispatch swap)
+    // Swap fake opcodes to confuse dump (safe — only fake keys)
     L.push(`local function ${swapFn}()`);
-    this.fakeOps.forEach((fop,i)=>{
-      const otherFop=this.fakeOps[(i+1)%this.fakeOps.length];
-      L.push(`local _tmp=${dispTblName}[${oN(fop,r)}]`);
-      L.push(`${dispTblName}[${oN(fop,r)}]=${dispTblName}[${oN(otherFop,r)}]`);
-      L.push(`${dispTblName}[${oN(otherFop,r)}]=${oN(r.nextInt(0,255),r)}`);
+    this.fakeOps.slice(0,4).forEach((fop,i)=>{
+      const nxtFop=this.fakeOps[(i+1)%this.fakeOps.length];
+      L.push(`local _t=${dispTblName}[${oN(fop,r)}]`);
+      L.push(`${dispTblName}[${oN(fop,r)}]=${dispTblName}[${oN(nxtFop,r)}]`);
+      L.push(`${dispTblName}[${oN(nxtFop,r)}]=_t`);
     });
     L.push(`end`);
-    // Verify checksum of dispatch table size (detects if hooks modified it)
+    // Verify dispatch table integrity
     L.push(`local function ${verifyFn}()`);
     L.push(`local _cnt=0 for _ in pairs(${dispTblName}) do _cnt=_cnt+1 end`);
-    // If table was modified by dumper, size will differ
-    L.push(`if _cnt<${oN(Object.keys(OP).length-5,r)} then`);
+    L.push(`if _cnt<${oN(expectedSize-5,r)} then`);
+    // Table was modified — wipe it (script stops working = anti-dump)
     L.push(`for _k in pairs(${dispTblName}) do ${dispTblName}[_k]=nil end`);
-    L.push(`error("") end end`);
+    L.push(`end end`);
     L.push(`pcall(${swapFn})`);
     L.push(`pcall(${verifyFn})`);
-    L.push(`if spawn then spawn(function() while wait(${oN(3,r)}) do pcall(${verifyFn}) pcall(${swapFn}) end end) end`);
+    // Periodic with delay not tight loop
+    L.push(`if task then task.delay(${oN(10,r)},function() pcall(${verifyFn}) pcall(${swapFn}) end)`);
+    L.push(`end`);
     return L.join('\n');
   }
 
-  // ── Anti-Environment (full) ──
+  // ── Anti-Environment ──
   buildAntiEnv(rng){
     const r=rng||this.rng;
     const N=()=>r.randomName();
@@ -268,8 +244,8 @@ class VMCodegen{
     L.push(`for ${iV}=1,#s do`);
     L.push(`_enc=_enc..string.char(bit32.bxor(string.byte(s,${iV}),string.byte(_key,(${iV}%#_key)+1))) end`);
     L.push(`return _enc end`);
-    L.push(`for ${iV}=1,15 do`);
-    L.push(`local ${fakeNameV}=${encStrV}(${oS('_secureValue_')}..${iV})`);
+    L.push(`for ${iV}=1,10 do`);
+    L.push(`local ${fakeNameV}=${encStrV}(${oS('_sv_')}..${iV})`);
     L.push(`${honeypotV}[${fakeNameV}]=function()`);
     L.push(`local _e=${gfV} and ${gfV}(2) or nil`);
     L.push(`if _e then for _k in ${prV}(_e) do ${rsV}(_e,_k,nil) end end`);
@@ -284,10 +260,7 @@ class VMCodegen{
     L.push(`for _,_pk in ipairs(_p) do if _k==_pk then return end end`);
     L.push(`${realEnvV}[_k]=_v end,`);
     L.push(`__metatable=${oS('Locked')},`);
-    L.push(`__tostring=function()`);
-    L.push(`local _ce=${gfV} and ${gfV}(2) or nil`);
-    L.push(`if _ce and _ce~=${realEnvV} then for _k in ${prV}(_ce) do ${rsV}(_ce,_k,nil) end return "" end`);
-    L.push(`return ${oS('Environment')} end}`);
+    L.push(`__tostring=function() return ${oS('table')} end}`);
     L.push(`${smV}(${fakeEnvV},${realMetaV})`);
     L.push(`local ${origGfV}=getfenv`);
     L.push(`getfenv=function(...)`);
@@ -296,67 +269,43 @@ class VMCodegen{
     L.push(`return ${origGfV} and ${origGfV}(...) or ${realEnvV} end`);
     L.push(`if ${npV} then local _ep=${npV}(true) local _em=${gmV}(_ep)`);
     L.push(`if _em then _em.__index=${realMetaV}.__index _em.__newindex=${realMetaV}.__newindex end end`);
-    L.push(`local function ${checkV}()`);
-    L.push(`local _ok,_r=${pcV}(function() return getfenv and getfenv() end)`);
-    L.push(`if not _ok then ${protV}=true end return not _ok end`);
+    // Periodic env check — task.delay, not while loop
+    L.push(`local function ${checkV}() local _ok=${pcV}(function() return getfenv and getfenv() end)`);
+    L.push(`if not _ok then ${protV}=true end end`);
     L.push(`${checkV}()`);
-    L.push(`if spawn then spawn(function() while wait(0.5) do ${checkV}() end end) end`);
-    L.push(`if ${sfV} then ${sfV}(1,${fakeEnvV}) end`);
+    L.push(`if task then task.delay(${oN(5,r)},function() ${checkV}() end) end`);
+    L.push(`if ${sfV} then pcall(${sfV},1,${fakeEnvV}) end`);
     return L.join('\n');
   }
 
-  // ── Fake obfuscator layer — looks like real obfuscator but is decoy ──
-  buildFakeObfuscatorLayer(rng){
+  // ── Fake obfuscator decoy (confuse skidders) ──
+  buildFakeObfLayer(rng){
     const r=rng||this.rng;
     const N=()=>r.randomName();
-    // Generate fake XOR-based "obfuscator" that looks real
-    // but actually just runs a dead branch
     const fakeFn=N(),fakeKeyV=N(),fakeTblV=N(),fakeDecFn=N(),fakeRunFn=N();
     const fakeKey=r.randomKeyArray(r.nextInt(8,16));
-    // Fake encrypted payload (random garbage bytes)
-    const fakePayload=r.randomKeyArray(r.nextInt(200,400)).map(b=>b.toString().padStart(3,'0')).map(b=>`\\${b}`).join('');
+    // Fake "encrypted" payload — random bytes that decrypt to garbage
+    const fakeBytes=r.randomKeyArray(r.nextInt(150,300));
+    const fakePayload='"'+fakeBytes.map(b=>`\\${b.toString().padStart(3,'0')}`).join('')+'"';
     const L=[];
-    L.push(`-- [[ Alrect ProteccT Core Layer ]]`);
+    L.push(`-- [[ ProteccT Core Runtime ]]`);
     L.push(`local ${fakeKeyV}={${fakeKey.join(',')}}`);
-    L.push(`local ${fakeTblV}="${fakePayload}"`);
+    L.push(`local ${fakeTblV}=${fakePayload}`);
     L.push(`local function ${fakeDecFn}(_t,_k)`);
     L.push(`local _s="" for _i=1,#_t do`);
-    L.push(`local _b=string.byte(_t,_i)`);
-    L.push(`_s=_s..string.char(bit32.bxor(_b,_k[(_i-1)%#_k+1])) end return _s end`);
-    // Fake runtime function — appears to be the "real" VM but is never called
-    L.push(`local function ${fakeRunFn}(_proto)`);
-    L.push(`local _env=getfenv and getfenv() or _G`);
+    L.push(`_s=_s..string.char(bit32.bxor(string.byte(_t,_i),_k[(_i-1)%#_k+1])) end return _s end`);
+    L.push(`local function ${fakeRunFn}(_p)`);
+    L.push(`local _e=getfenv and getfenv() or _G`);
     L.push(`local _bc=${fakeDecFn}(${fakeTblV},${fakeKeyV})`);
-    L.push(`local _fn,_e=(loadstring or load)(_bc)`);
-    L.push(`if _fn then return _fn() else return nil end end`);
-    // Make it look active but never actually run (fake condition)
-    const fakeCondVal=r.nextInt(10000,99999);
-    L.push(`if false then ${fakeRunFn}(nil) end`);
+    L.push(`local _f,_e2=(loadstring or load)(_bc)`);
+    L.push(`if _f then return _f() end return nil end`);
+    // Fake call — dead branch, never runs
+    const deadVal=r.nextInt(10000,99999);
+    L.push(`if (${oN(deadVal,r)})~=${oN(deadVal,r)} then ${fakeRunFn}(nil) end`);
     return L.join('\n');
   }
 
-  // ── Point 15: VM Fragmentation — split handler into sub-functions ──
-  buildFragmentedHandlers(rng,regA,constA,ipA,topA,unpackFn){
-    const r=rng||this.rng;
-    const N=()=>r.randomName();
-    const fragFns=[];
-    // Fragment 1: arithmetic + logic handlers
-    const frag1=N();
-    const aD=N(),bD=N(),cD=N();
-    fragFns.push({name:frag1,ops:[OP.ADD,OP.SUB,OP.MUL,OP.DIV,OP.MOD,OP.POW,OP.UNM,OP.NOT,OP.LEN,OP.CONCAT]});
-    // Fragment 2: comparison + jump handlers
-    const frag2=N();
-    fragFns.push({name:frag2,ops:[OP.EQ,OP.LT,OP.LE,OP.JMP,OP.TEST,OP.TESTSET]});
-    // Fragment 3: load/store handlers
-    const frag3=N();
-    fragFns.push({name:frag3,ops:[OP.LOADK,OP.LOADNIL,OP.LOADBOOL,OP.MOVE,OP.GETGLOBAL,OP.SETGLOBAL,OP.GETTABLE,OP.SETTABLE,OP.NEWTABLE,OP.SETLIST]});
-    // Fragment 4: call/return handlers
-    const frag4=N();
-    fragFns.push({name:frag4,ops:[OP.CALL,OP.TAILCALL,OP.RETURN,OP.FORLOOP,OP.FORPREP,OP.GETUPVAL,OP.SETUPVAL,OP.CLOSURE,OP.SELF,OP.NOP]});
-    return fragFns;
-  }
-
-  // ── Full VM runtime (Points 2,5,7,10,15) ──
+  // ── Full VM Runtime ──
   generateVMRuntime(rng){
     const r=rng||this.rng;
     const N=()=>r.randomName();
@@ -366,200 +315,170 @@ class VMCodegen{
     const dispTbl=N(),opRaw=N(),aRaw=N(),bRaw=N(),cRaw=N();
     const opDec=N(),aDec=N(),bDec=N(),cDec=N();
     const unpackFn=N(),retA=N(),execFn=N(),shuffKeyV=N();
-    const {fn:rtKeyFn,code:rtKeyCode}=this.buildRTKeyFn(r);
-
-    // Anti-hook refs
+    const{fn:rtKeyFn,code:rtKeyCode}=this.buildRTKeyFn(r);
     const ah1=N(),ah2=N(),ah3=N(),ah4=N(),ah5=N(),ah6=N();
     const mask=this.iKeyOp,maskA=this.iKeyA,maskB=this.iKeyB,maskC=this.iKeyC,mf=this.mutF;
-
     const RK=v=>`(${v}<0 and ${constA}[-${v}] or ${regA}[${v}])`;
-
     const L=[];
 
     // Anti-hook captures
     L.push(`local ${ah1}=bit32.bxor local ${ah2}=bit32.bor local ${ah3}=bit32.rshift`);
     L.push(`local ${ah4}=bit32.lshift local ${ah5}=bit32.band local ${ah6}=string.byte`);
     L.push(`if type(${ah1})~="function" or type(${ah6})~="function" then error("") return end`);
+    // Anti-debug (lightweight)
+    L.push(`do local _d=type(debug)=="table" and debug`);
+    L.push(`if _d and type(_d.sethook)=="function" then pcall(_d.sethook) end end`);
 
-    // ── Anti-debug ──
-    L.push(`do local _dbg=type(debug)=="table" and debug`);
-    L.push(`if _dbg and type(_dbg.sethook)=="function" then pcall(_dbg.sethook) end end`);
-
-    // ── Runtime key function ──
     L.push(rtKeyCode);
-
     L.push(`local ${unpackFn}=(table and table.unpack) or unpack`);
-
-    // ── Point 2: Multi-layer — runtime key seed derived from time ──
     const rtSeedV=N();
-    L.push(`local ${rtSeedV}=math.floor((tick and tick() or os.clock())*${oN(1000,r)})%256`);
+    L.push(`local ${rtSeedV}=math.floor((tick and tick() or os.clock())*1000)%256`);
 
-    // ── Dispatch table (Point 2 & 7) ──
+    // Dispatch table
     L.push(`local ${dispTbl}={}`);
+    L.push(`local ${vmFn}`);
 
-    // Helper for register access with scramble map
-    // We store regMap as Lua table
-    const regMapV=N();
-    L.push(`local ${regMapV}={${this.regMap.map((v,i)=>v).join(',')}}`);
-
-    // ── Fragment handlers (Point 15: VM Fragmentation) ──
-    const retV=N();
-
-    // Handler builder helper
-    const mkHandler=(opName,body)=>{
-      const mutVal=this.opMap[OP[opName]??0]??this.opMap[OP.NOP];
+    // ── Fragmented handlers ──
+    const mkH=(opName,body)=>{
+      const opKey=OP[opName];
+      if(opKey===undefined)return;
+      const mutVal=this.opMap[opKey];
       L.push(`${dispTbl}[${oN(mutVal,r)}]=function(${aDec},${bDec},${cDec})`);
-      if(Array.isArray(body)) body.forEach(b=>L.push(`  ${b}`));
-      else L.push(`  ${body}`);
+      (Array.isArray(body)?body:[body]).forEach(b=>L.push(`  ${b}`));
       L.push(`end`);
     };
 
-    // ── Fragmented group 1: Load/Move/Global ──
-    const frag1Fn=N();
-    L.push(`local function ${frag1Fn}()`);
-    mkHandler('LOADK',`${regA}[${aDec}]=${constA}[${bDec}]`);
-    mkHandler('LOADNIL',`for _i=${aDec},${bDec} do ${regA}[_i]=nil end`);
-    mkHandler('LOADBOOL',[`${regA}[${aDec}]=(${bDec}~=0)`,`if ${cDec}~=0 then ${ipA}=${ipA}+1 end`]);
-    mkHandler('MOVE',`${regA}[${aDec}]=${regA}[${bDec}]`);
-    mkHandler('GETGLOBAL',`${regA}[${aDec}]=${envA}[${constA}[${bDec}]]`);
-    mkHandler('SETGLOBAL',`${envA}[${constA}[${bDec}]]=${regA}[${aDec}]`);
-    mkHandler('GETUPVAL',`${regA}[${aDec}]=${upvA}[${bDec}]`);
-    mkHandler('SETUPVAL',`${upvA}[${bDec}]=${regA}[${aDec}]`);
-    mkHandler('NEWTABLE',`${regA}[${aDec}]={}`);
-    mkHandler('GETTABLE',`${regA}[${aDec}]=${regA}[${bDec}][${RK(cDec)}]`);
-    mkHandler('SETTABLE',`${regA}[${aDec}][${RK(bDec)}]=${RK(cDec)}`);
-    mkHandler('SETLIST',`${regA}[${aDec}][${bDec}]=${regA}[${cDec}]`);
-    mkHandler('SELF',[`local _o=${regA}[${bDec}]`,`${regA}[${aDec}+1]=_o`,`${regA}[${aDec}]=_o[${RK(cDec)}]`]);
-    L.push(`end ${frag1Fn}()`);
+    const frag1=N();
+    L.push(`local function ${frag1}()`);
+    mkH('LOADK',`${regA}[${aDec}]=${constA}[${bDec}]`);
+    mkH('LOADNIL',`for _i=${aDec},${bDec} do ${regA}[_i]=nil end`);
+    mkH('LOADBOOL',[`${regA}[${aDec}]=(${bDec}~=0)`,`if ${cDec}~=0 then ${ipA}=${ipA}+1 end`]);
+    mkH('MOVE',`${regA}[${aDec}]=${regA}[${bDec}]`);
+    mkH('GETGLOBAL',`${regA}[${aDec}]=${envA}[${constA}[${bDec}]]`);
+    mkH('SETGLOBAL',`${envA}[${constA}[${bDec}]]=${regA}[${aDec}]`);
+    mkH('GETUPVAL',`${regA}[${aDec}]=${upvA}[${bDec}]`);
+    mkH('SETUPVAL',`${upvA}[${bDec}]=${regA}[${aDec}]`);
+    mkH('NEWTABLE',`${regA}[${aDec}]={}`);
+    mkH('GETTABLE',`${regA}[${aDec}]=${regA}[${bDec}] and ${regA}[${bDec}][${RK(cDec)}] or nil`);
+    mkH('SETTABLE',`if ${regA}[${aDec}] then ${regA}[${aDec}][${RK(bDec)}]=${RK(cDec)} end`);
+    mkH('SETLIST',`if ${regA}[${aDec}] then ${regA}[${aDec}][${bDec}]=${regA}[${cDec}] end`);
+    mkH('SELF',[`local _o=${regA}[${bDec}]`,`if _o then ${regA}[${aDec}+1]=_o ${regA}[${aDec}]=_o[${RK(cDec)}] end`]);
+    L.push(`end ${frag1}()`);
 
-    // ── Fragmented group 2: Arithmetic ──
-    const frag2Fn=N();
-    L.push(`local function ${frag2Fn}()`);
-    mkHandler('ADD',`${regA}[${aDec}]=${RK(bDec)}+${RK(cDec)}`);
-    mkHandler('SUB',`${regA}[${aDec}]=${RK(bDec)}-${RK(cDec)}`);
-    mkHandler('MUL',`${regA}[${aDec}]=${RK(bDec)}*${RK(cDec)}`);
-    mkHandler('DIV',`${regA}[${aDec}]=${RK(bDec)}/${RK(cDec)}`);
-    mkHandler('MOD',`${regA}[${aDec}]=${RK(bDec)}%${RK(cDec)}`);
-    mkHandler('POW',`${regA}[${aDec}]=${RK(bDec)}^${RK(cDec)}`);
-    mkHandler('CONCAT',[`local _s=""`,`for _i=${bDec},${cDec} do _s=_s..tostring(${regA}[_i]) end`,`${regA}[${aDec}]=_s`]);
-    mkHandler('UNM',`${regA}[${aDec}]=-${regA}[${bDec}]`);
-    mkHandler('NOT',`${regA}[${aDec}]=not ${regA}[${bDec}]`);
-    mkHandler('LEN',`${regA}[${aDec}]=#${regA}[${bDec}]`);
-    L.push(`end ${frag2Fn}()`);
+    const frag2=N();
+    L.push(`local function ${frag2}()`);
+    mkH('ADD',`${regA}[${aDec}]=${RK(bDec)}+${RK(cDec)}`);
+    mkH('SUB',`${regA}[${aDec}]=${RK(bDec)}-${RK(cDec)}`);
+    mkH('MUL',`${regA}[${aDec}]=${RK(bDec)}*${RK(cDec)}`);
+    mkH('DIV',`${regA}[${aDec}]=${RK(bDec)}/${RK(cDec)}`);
+    mkH('MOD',`${regA}[${aDec}]=${RK(bDec)}%${RK(cDec)}`);
+    mkH('POW',`${regA}[${aDec}]=${RK(bDec)}^${RK(cDec)}`);
+    mkH('CONCAT',[`local _s=""`,`for _i=${bDec},${cDec} do _s=_s..tostring(${regA}[_i] or "") end`,`${regA}[${aDec}]=_s`]);
+    mkH('UNM',`${regA}[${aDec}]=-${regA}[${bDec}]`);
+    mkH('NOT',`${regA}[${aDec}]=not ${regA}[${bDec}]`);
+    mkH('LEN',`if ${regA}[${bDec}]~=nil then ${regA}[${aDec}]=#${regA}[${bDec}] end`);
+    L.push(`end ${frag2}()`);
 
-    // ── Fragmented group 3: Compare + Jump ──
-    const frag3Fn=N();
-    L.push(`local function ${frag3Fn}()`);
-    mkHandler('EQ',`if(${RK(bDec)}==${RK(cDec)})~=(${aDec}~=0) then ${ipA}=${ipA}+1 end`);
-    mkHandler('LT',`if(${RK(bDec)}<${RK(cDec)})~=(${aDec}~=0) then ${ipA}=${ipA}+1 end`);
-    mkHandler('LE',`if(${RK(bDec)}<=${RK(cDec)})~=(${aDec}~=0) then ${ipA}=${ipA}+1 end`);
-    mkHandler('JMP',`${ipA}=${ipA}+${aDec}`);
-    mkHandler('TEST',`if(not not ${regA}[${aDec}])~=(${cDec}~=0) then ${ipA}=${ipA}+1 end`);
-    mkHandler('TESTSET',`if(not not ${regA}[${bDec}])==(${cDec}~=0) then ${regA}[${aDec}]=${regA}[${bDec}] else ${ipA}=${ipA}+1 end`);
-    L.push(`end ${frag3Fn}()`);
+    const frag3=N();
+    L.push(`local function ${frag3}()`);
+    mkH('EQ',`if(${RK(bDec)}==${RK(cDec)})~=(${aDec}~=0) then ${ipA}=${ipA}+1 end`);
+    mkH('LT',`if(${RK(bDec)}<${RK(cDec)})~=(${aDec}~=0) then ${ipA}=${ipA}+1 end`);
+    mkH('LE',`if(${RK(bDec)}<=${RK(cDec)})~=(${aDec}~=0) then ${ipA}=${ipA}+1 end`);
+    mkH('JMP',`${ipA}=${ipA}+${aDec}`);
+    mkH('TEST',`if(not not ${regA}[${aDec}])~=(${cDec}~=0) then ${ipA}=${ipA}+1 end`);
+    mkH('TESTSET',`if(not not ${regA}[${bDec}])==(${cDec}~=0) then ${regA}[${aDec}]=${regA}[${bDec}] else ${ipA}=${ipA}+1 end`);
+    L.push(`end ${frag3}()`);
 
-    // ── Fragmented group 4: Call/Return ──
-    const frag4Fn=N();
-    L.push(`local function ${frag4Fn}()`);
-    mkHandler('CALL',[
-      `local _fn=${regA}[${aDec}] local _ar={}`,
-      `for _i=1,${bDec}-1 do _ar[_i]=${regA}[${aDec}+_i] end`,
+    const frag4=N();
+    L.push(`local function ${frag4}()`);
+    mkH('CALL',[
+      `local _fn=${regA}[${aDec}]`,
+      `if type(_fn)~="function" then return end`,
+      `local _ar={} for _i=1,${bDec}-1 do _ar[_i]=${regA}[${aDec}+_i] end`,
       `local _rs={_fn(${unpackFn}(_ar))}`,
       `for _i=1,${cDec}-1 do ${regA}[${aDec}+_i-1]=_rs[_i] end`,
       `${topA}=${aDec}+(${cDec}-1)`,
     ]);
-    mkHandler('TAILCALL',[
-      `local _fn=${regA}[${aDec}] local _ar={}`,
-      `for _i=1,${bDec}-1 do _ar[_i]=${regA}[${aDec}+_i] end`,
+    mkH('TAILCALL',[
+      `local _fn=${regA}[${aDec}]`,
+      `if type(_fn)~="function" then return end`,
+      `local _ar={} for _i=1,${bDec}-1 do _ar[_i]=${regA}[${aDec}+_i] end`,
       `return _fn(${unpackFn}(_ar))`,
     ]);
-    mkHandler('RETURN',[
+    mkH('RETURN',[
       `local ${retA}={}`,
       `if ${bDec}==0 then for _i=${aDec},${topA} do ${retA}[#${retA}+1]=${regA}[_i] end`,
       `else for _i=0,${bDec}-2 do ${retA}[#${retA}+1]=${regA}[${aDec}+_i] end end`,
       `return ${unpackFn}(${retA})`,
     ]);
-    mkHandler('FORPREP',`${regA}[${aDec}]=${regA}[${aDec}]-${regA}[${aDec}+2] ${ipA}=${ipA}+${bDec}`);
-    mkHandler('FORLOOP',[
+    mkH('FORPREP',`${regA}[${aDec}]=${regA}[${aDec}]-${regA}[${aDec}+2] ${ipA}=${ipA}+${bDec}`);
+    mkH('FORLOOP',[
       `${regA}[${aDec}]=${regA}[${aDec}]+${regA}[${aDec}+2]`,
       `if(${regA}[${aDec}+2]>0 and ${regA}[${aDec}]<=${regA}[${aDec}+1])or(${regA}[${aDec}+2]<0 and ${regA}[${aDec}]>=${regA}[${aDec}+1]) then`,
       `${regA}[${aDec}+3]=${regA}[${aDec}] ${ipA}=${ipA}+${bDec} end`,
     ]);
-    mkHandler('CLOSURE',`local _sp=${protoA}[3][${bDec}+1] ${regA}[${aDec}]=function(...) return ${vmFn}(_sp,{},${envA}) end`);
-    mkHandler('VARARG',`-- vararg`);
-    mkHandler('NOP',`-- nop`);
-    L.push(`end ${frag4Fn}()`);
+    mkH('CLOSURE',`local _sp=${protoA}[3][${bDec}+1] if _sp then ${regA}[${aDec}]=function(...) return ${vmFn}(_sp,{},${envA}) end end`);
+    mkH('VARARG',`-- vararg`);
+    mkH('NOP',`-- nop`);
+    L.push(`end ${frag4}()`);
 
-    // ── VM function ──
+    // VM function
     L.push(`${vmFn}=function(${protoA},${upvA},${envA})`);
     L.push(`${envA}=${envA} or _G`);
     L.push(`local ${bcStr}=${protoA}[1]`);
-    L.push(`local ${shuffKeyV}=${protoA}[4]`); // shuffle key for bytecode
+    L.push(`local ${shuffKeyV}=${protoA}[4]`);
     L.push(`local ${constA}=${protoA}[2]`);
-    L.push(`local ${bcLen}=#${bcStr}//4`);
-    L.push(`local ${regA}={} local ${ipA}=1 local ${topA}=0 ${upvA}=${upvA} or {}`);
+    L.push(`local ${bcLen}=math.floor(#${bcStr}/4)`);
+    L.push(`local ${regA}={} local ${ipA}=1 local ${topA}=0`);
+    L.push(`${upvA}=${upvA} or {}`);
 
-    // ── Point 5: Control flow virtualization — state machine ──
+    // State machine execution loop
     L.push(`local function ${execFn}()`);
     L.push(`local _st=1 local _pos=0`);
+    L.push(`local _opRaw,_aRaw,_bRaw,_cRaw,_opD,_aD,_bD,_cD`);
     L.push(`while _st~=0 do`);
-    // State 1: fetch
+    // State 1: Fetch
     L.push(`if _st==1 then`);
     L.push(`if ${ipA}>${bcLen} then _st=0 break end`);
     L.push(`local _base=(${ipA}-1)*4`);
-    L.push(`local ${opRaw}=${ah6}(${bcStr},_base+1)`);
-    L.push(`local ${aRaw}=${ah6}(${bcStr},_base+2)`);
-    L.push(`local ${bRaw}=${ah6}(${bcStr},_base+3)`);
-    L.push(`local ${cRaw}=${ah6}(${bcStr},_base+4)`);
+    L.push(`_opRaw=${ah6}(${bcStr},_base+1) or 0`);
+    L.push(`_aRaw=${ah6}(${bcStr},_base+2) or 0`);
+    L.push(`_bRaw=${ah6}(${bcStr},_base+3) or 0`);
+    L.push(`_cRaw=${ah6}(${bcStr},_base+4) or 0`);
     L.push(`${ipA}=${ipA}+1 _pos=${ipA}-2 _st=2`);
-    // State 2: decode with per-instruction runtime key
+    // State 2: Decode
     L.push(`elseif _st==2 then`);
-    const roll=N();
-    L.push(`local ${roll}=(${oN(this.rtKeySeed,r)}*(_pos+1))%256`);
-    // Decode + un-shuffle
-    L.push(`local _sk=${shuffKeyV}[(_pos%#${shuffKeyV})+1]`);
-    L.push(`${opRaw}=${ah1}(${opRaw},_sk)`);
-    L.push(`${aRaw}=${ah1}(${aRaw},${ah3}(_sk,1)%256)`);
-    L.push(`${bRaw}=${ah1}(${bRaw},${ah3}(_sk,2)%256)`);
-    L.push(`${cRaw}=${ah1}(${cRaw},${ah3}(_sk,3)%256)`);
-    // Then apply position key
-    L.push(`local ${opDec}=${ah1}(${ah1}(${opRaw},${roll}),${ah1}(${oN(mask,r)},${rtKeyFn}(${oN(mask,r)},_pos)))`);
-    L.push(`local ${aDec}=${ah1}(${ah1}(${aRaw},${ah3}(${roll},1)%256),${ah1}(${oN(maskA,r)},${rtKeyFn}(${oN(maskA,r)},_pos)))-128`);
-    L.push(`local ${bDec}=${ah1}(${ah1}(${bRaw},${ah3}(${roll},2)%256),${ah1}(${oN(maskB,r)},${rtKeyFn}(${oN(maskB,r)},_pos)))-128`);
-    L.push(`local ${cDec}=${ah1}(${ah1}(${cRaw},${ah3}(${roll},3)%256),${ah1}(${oN(maskC,r)},${rtKeyFn}(${oN(maskC,r)},_pos)))-128`);
+    const rollV=N();
+    L.push(`local ${rollV}=(${oN(this.rtKeySeed,r)}*(_pos+1))%256`);
+    L.push(`local _sk=(${shuffKeyV} and ${shuffKeyV}[(_pos%#${shuffKeyV})+1]) or 0`);
+    // Un-shuffle + un-position-key
+    L.push(`_opD=${ah1}(${ah1}(_opRaw,_sk),${ah1}(${rollV},${rtKeyFn}(${oN(mask,r)},_pos)))`);
+    L.push(`_aD=${ah1}(${ah1}(_aRaw,${ah3}(_sk,1)%256),${ah1}(${ah3}(${rollV},1)%256,${rtKeyFn}(${oN(maskA,r)},_pos)))-(${oN(128,r)})`);
+    L.push(`_bD=${ah1}(${ah1}(_bRaw,${ah3}(_sk,2)%256),${ah1}(${ah3}(${rollV},2)%256,${rtKeyFn}(${oN(maskB,r)},_pos)))-(${oN(128,r)})`);
+    L.push(`_cD=${ah1}(${ah1}(_cRaw,${ah3}(_sk,3)%256),${ah1}(${ah3}(${rollV},3)%256,${rtKeyFn}(${oN(maskC,r)},_pos)))-(${oN(128,r)})`);
     L.push(`_st=3`);
-    // State 3: dispatch + self-modify
+    // State 3: Dispatch
     L.push(`elseif _st==3 then`);
-    L.push(`local _h=${dispTbl}[${opDec}]`);
-    L.push(`if _h then _h(${aDec},${bDec},${cDec}) end`);
-    // ── Point 10: Self-modifying VM — rotate dispatch for next few opcodes ──
-    L.push(`if _pos%${oN(7,r)}==0 then`);
-    L.push(`local _k1,_k2=_pos%#${dispTbl}+1,(_pos+3)%#${dispTbl}+1`);
-    L.push(`-- dispatch self-modify tick`);
-    L.push(`end`);
+    L.push(`local _h=${dispTbl}[_opD]`);
+    L.push(`if type(_h)=="function" then _h(_aD,_bD,_cD) end`);
     L.push(`_st=1 end end end`); // close state machine + execFn
 
     L.push(`return ${execFn}()`);
-    L.push(`end`); // vmFn close
+    L.push(`end`); // vmFn
 
-    return {code:L.join('\n'),vmFnName:vmFn,dispTblName:dispTbl};
+    return{code:L.join('\n'),vmFnName:vmFn,dispTblName:dispTbl};
   }
 
-  // ── Serialize proto with all encoding ──
   serializeProto(proto,rng){
     const r=rng||this.rng;
-    const shuffleKey=r.randomKeyArray(r.nextInt(8,14));
-    const {str:bcStr}=this.serializeBytecodeStr(proto.code,r);
-    // Apply shuffle key to bytecode string (second pass)
-    const finalStr=bcStr; // already encoded
+    const{str:bcStr,shuffleKey}=this.serializeBytecodeStr(proto.code,r);
     const encConsts=proto.consts.map((c,i)=>this.encryptConst(c,i,r));
     const constStr=`{${encConsts.join(',')}}`;
     const subStr=`{${proto.protos.map(p=>this.serializeProto(p,r)).join(',')}}`;
     const shuffStr=`{${shuffleKey.join(',')}}`;
-    return `{${finalStr},${constStr},${subStr},${shuffStr}}`;
+    return `{${bcStr},${constStr},${subStr},${shuffStr}}`;
   }
 
-  // ── Multi-layer packing (Point 2: stateful encrypt) ──
   buildPackedLayer(code,rng){
     const r=rng||this.rng;
     const keys=r.randomKeyArray(r.nextInt(12,20));
@@ -592,23 +511,15 @@ class VMCodegen{
     ].join('\n');
   }
 
-  // ── Full build ──
   build(proto,rng,mode){
     const r=rng||this.rng;
     const N=()=>r.randomName();
-    const vmFnRef=N();
 
-    // 1. Anti-environment
     const antiEnv=this.buildAntiEnv(r);
-    // 2. Anti-HTTPSpy
     const antiHTTP=this.buildAntiHTTPSpy(r);
-    // 3. Fake obfuscator decoy layer
-    const fakeLayer=this.buildFakeObfuscatorLayer(r);
-    // 4. VM runtime
-    const {code:vmRuntime,vmFnName,dispTblName}=this.generateVMRuntime(r);
-    // 5. Anti-dump (needs dispTbl name)
-    const antiDump=this.buildAntiDump(r,dispTblName,'constA');
-    // 6. Serialize proto
+    const fakeLayer=this.buildFakeObfLayer(r);
+    const{code:vmRuntime,vmFnName,dispTblName}=this.generateVMRuntime(r);
+    const antiDump=this.buildAntiDump(r,dispTblName);
     const serialized=this.serializeProto(proto,r);
     const protoVar=N(),envVar=N();
 
@@ -618,14 +529,12 @@ class VMCodegen{
       fakeLayer,
       vmRuntime,
       antiDump,
-      `local ${vmFnRef}=${vmFnName}`,
       `local ${protoVar}=${serialized}`,
       `local ${envVar}=getfenv and getfenv() or _ENV or _G`,
-      `return ${vmFnRef}(${protoVar},{},${envVar})`,
+      `return ${vmFnName}(${protoVar},{},${envVar})`,
     ];
 
     const vmCode=parts.join('\n');
-
     if(mode==='standard'){
       return this.buildPackedLayer(vmCode,r);
     }
