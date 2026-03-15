@@ -3,7 +3,7 @@ const { Randomizer }  = require('./randomizer');
 const { Encoder }     = require('./encoder');
 const { VMBuilder }   = require('./vm_builder');
 const { Protections } = require('./protections');
-const { generateObfuscated } = require('./codegen');
+const { generateHardObfuscated } = require('./codegen');
 
 const LUA_RESERVED = new Set([
   'and','break','do','else','elseif','end','false','for','function','goto','if','in',
@@ -77,7 +77,7 @@ class Obfuscator {
   obfuscate(src){
     if(this.mode==='executor'){
       // WeAreDev-style: string table with decimal escapes + XOR decode + shuffle trick
-      return generateObfuscated(src, this.mode, this.rng);
+      return generateHardObfuscated(src, this.rng);
     } else {
       // Standard: rename + string encrypt + VM pipeline
       let code=src;
