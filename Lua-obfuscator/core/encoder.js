@@ -7,18 +7,64 @@ class Encoder {
     this.rng = rng || new Randomizer();
   }
 
-  xorEncrypt(str, keys) {
+  // Multi-step: XOR + rotate + scatter with position-dependent key mutation
+  heavyEncrypt(str, keys, seed) {
     const out = [];
+    let state = seed & 0xFF;
     for (let i = 0; i < str.length; i++) {
-      out.push((str.charCodeAt(i) ^ keys[i % keys.length]) & 0xFF);
+      let b = str.charCodeAt(i);
+      // Step 1: XOR with key
+      b = (b ^ keys[i % keys.length]) & 0xFF;
+      // Step 2: XOR with position-mutated state
+      b = (b ^ state) & 0xFF;
+      // Step 3: rotate left by (i%5)+1 bits
+      const rot = (i % 5) + 1;
+      b = ((b << rot) | (b >> (8 - rot))) & 0xFF;
+      // Step 4: XOR with secondary key derived from position
+      b = (b ^ ((i * 7 + seed) & 0xFF)) & 0xFF;
+      // Update state
+      state = (state * 31 + b + i) & 0xFF;
+      out.push(b);
     }
     return out;
   }
 
-  rotEncrypt(str, keys) {
+  buildHeavyDecryptor(fnName, keys, seed, rng) {
+    const r = rng || this.rng;
+    const a=r.randomName(), b=r.randomName(), c=r.randomName(), d=r.randomName();
+    const e=r.randomName(), f=r.randomName(), g=r.randomName(), h=r.randomName();
+    const kV=r.randomName(), sV=r.randomName();
+    return [
+      `local function ${fnName}(${a})`,
+      `local ${b}=""`,
+      `local ${sV}=${seed & 0xFF}`,
+      `local ${kV}={${keys.join(',')}}`,
+      `for ${c}=1,#${a} do`,
+      `local ${d}=${a}[${c}]`,
+      // Step 4 reverse: XOR with position-derived key
+      `local ${e}=((${c}-1)*7+${seed & 0xFF})%256`,
+      `${d}=bit32.bxor(${d},${e})`,
+      // Step 3 reverse: rotate right
+      `local ${f}=(${c}-1)%5+1`,
+      `${d}=bit32.bor(bit32.rshift(${d},${f}),bit32.lshift(${d},8-${f}))%256`,
+      // Step 2 reverse: XOR with state
+      `${d}=bit32.bxor(${d},${sV})`,
+      // Step 1 reverse: XOR with key
+      `${d}=bit32.bxor(${d},${kV}[((${c}-1)%#${kV})+1])`,
+      // Update state (must mirror encrypt state update - use original encrypted byte)
+      `${sV}=(${sV}*31+${a}[${c}]+(${c}-1))%256`,
+      `${b}=${b}..string.char(${d})`,
+      `end`,
+      `return ${b}`,
+      `end`,
+    ].join('\n');
+  }
+
+  // Simpler XOR for short strings (fallback)
+  xorEncrypt(str, keys) {
     const out = [];
     for (let i = 0; i < str.length; i++) {
-      out.push((str.charCodeAt(i) + keys[i % keys.length]) & 0xFF);
+      out.push((str.charCodeAt(i) ^ keys[i % keys.length]) & 0xFF);
     }
     return out;
   }
@@ -36,6 +82,15 @@ class Encoder {
       `return ${c}`,
       `end`,
     ].join('\n');
+  }
+
+  // Rotation decrypt
+  rotEncrypt(str, keys) {
+    const out = [];
+    for (let i = 0; i < str.length; i++) {
+      out.push((str.charCodeAt(i) + keys[i % keys.length]) & 0xFF);
+    }
+    return out;
   }
 
   buildRotDecryptor(fnName, rng) {
