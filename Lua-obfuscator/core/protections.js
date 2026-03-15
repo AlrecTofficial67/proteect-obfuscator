@@ -7,8 +7,6 @@ class Protections {
     this.rng = rng || new Randomizer();
   }
 
-  _n() { return this.rng.randomName(); }
-
   buildAntiDebug(rng) {
     const r = rng || this.rng;
     const v1=r.randomName(),v2=r.randomName(),v3=r.randomName(),v4=r.randomName();
@@ -38,7 +36,7 @@ class Protections {
     const r = rng || this.rng;
     const v1=r.randomName(),v2=r.randomName();
     const fns=['tostring','tonumber','type','pairs','ipairs','pcall','error','select'];
-    const f1=r.pick(fns), f2=r.pick(fns.filter(x=>x!==f1));
+    const f1=r.pick(fns),f2=r.pick(fns.filter(x=>x!==f1));
     return [
       `local ${v1}=type(rawget(_G,"${f1}"))=="function"`,
       `local ${v2}=type(rawget(_G,"${f2}"))=="function"`,
@@ -50,7 +48,8 @@ class Protections {
     const r = rng || this.rng;
     const v1=r.randomName(),v2=r.randomName(),v3=r.randomName();
     return [
-      `local ${v1}=tostring local ${v2}=rawequal`,
+      `local ${v1}=tostring`,
+      `local ${v2}=rawequal`,
       `local ${v3}=pcall(function() assert(type(${v1})=="function") end)`,
       `if not ${v3} then error("") end`,
     ].join('\n');
@@ -62,7 +61,7 @@ class Protections {
     for (let i = 0; i < Math.min(code.length, 512); i++) {
       csum = (csum * 31 + code.charCodeAt(i)) & 0x7FFFFFFF;
     }
-    const salt = r.nextInt(1, 9999);
+    const salt=r.nextInt(1,9999);
     const v1=r.randomName(),v2=r.randomName(),v3=r.randomName();
     return [
       `local ${v1}=${csum}`,
@@ -81,6 +80,7 @@ class Protections {
       `do local ${v1}=${a+b} if ${v1}~=${a+b} then error("") end end`,
       `do local ${v1}=${a} if not(${v1}==${v1}) then error("") end end`,
       `do local ${v1}=type(tostring)=="function" if not ${v1} then error("") end end`,
+      `do local ${v1}=${a*b} local ${v2}=${v1}//${a} if ${v2}~=${b} then error("") end end`,
     ];
     return r.pick(variants);
   }
@@ -95,6 +95,7 @@ class Protections {
       `do local ${v1}=nil if ${v1} then local ${v2}=${a} end end`,
       `repeat local ${v1}=0 until true`,
       `do local ${v1}=(function() return ${a} end)() if false then return ${v1} end end`,
+      `do local ${v1}=${a} local ${v2}=${b} ${v1}=${v1}+0 ${v2}=${v2}+0 if false then error("") end end`,
     ];
     return r.pick(variants);
   }
