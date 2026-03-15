@@ -1,17 +1,5 @@
 'use strict';
-const OP={
-  LOADK:0,LOADNIL:1,LOADBOOL:2,MOVE:3,
-  GETGLOBAL:4,SETGLOBAL:5,GETTABLE:6,SETTABLE:7,
-  NEWTABLE:8,SETLIST:9,
-  ADD:10,SUB:11,MUL:12,DIV:13,MOD:14,POW:15,
-  UNM:16,NOT:17,LEN:18,CONCAT:19,
-  EQ:20,LT:21,LE:22,
-  JMP:23,TEST:24,TESTSET:25,
-  CALL:26,TAILCALL:27,RETURN:28,
-  FORLOOP:29,FORPREP:30,
-  GETUPVAL:31,SETUPVAL:32,CLOSURE:33,VARARG:34,SELF:35,
-  NOP:36,
-};
+const OP={LOADK:0,LOADNIL:1,LOADBOOL:2,MOVE:3,GETGLOBAL:4,SETGLOBAL:5,GETTABLE:6,SETTABLE:7,NEWTABLE:8,SETLIST:9,ADD:10,SUB:11,MUL:12,DIV:13,MOD:14,POW:15,UNM:16,NOT:17,LEN:18,CONCAT:19,EQ:20,LT:21,LE:22,JMP:23,TEST:24,TESTSET:25,CALL:26,TAILCALL:27,RETURN:28,FORLOOP:29,FORPREP:30,GETUPVAL:31,SETUPVAL:32,CLOSURE:33,VARARG:34,SELF:35,NOP:36};
 const TK={NAME:'NAME',NUMBER:'NUMBER',STRING:'STRING',PLUS:'+',MINUS:'-',STAR:'*',SLASH:'/',PERCENT:'%',CARET:'^',HASH:'#',EQ:'==',NEQ:'~=',LT:'<',GT:'>',LE:'<=',GE:'>=',ASSIGN:'=',LPAREN:'(',RPAREN:')',LBRACE:'{',RBRACE:'}',LBRACKET:'[',RBRACKET:']',SEMI:';',COLON:':',DCOLON:'::',COMMA:',',DOT:'.',CONCAT:'..',VARARG:'...',AND:'and',BREAK:'break',DO:'do',ELSE:'else',ELSEIF:'elseif',END:'end',FALSE:'false',FOR:'for',FUNCTION:'function',GOTO:'goto',IF:'if',IN:'in',LOCAL:'local',NIL:'nil',NOT:'not',OR:'or',REPEAT:'repeat',RETURN:'return',THEN:'then',TRUE:'true',UNTIL:'until',WHILE:'while',EOF:'EOF'};
 const KW=new Set(['and','break','do','else','elseif','end','false','for','function','goto','if','in','local','nil','not','or','repeat','return','then','true','until','while']);
 class Lexer{
@@ -19,41 +7,16 @@ class Lexer{
   p(o=0){return this.src[this.pos+o]||'';}
   a(){const c=this.src[this.pos++];if(c==='\n')this.line++;return c;}
   m(c){if(this.src[this.pos]===c){this.pos++;return true;}return false;}
-  sk(){
-    while(this.pos<this.src.length){
-      const c=this.p();
-      if(' \t\r\n'.includes(c))this.a();
-      else if(c==='-'&&this.p(1)==='-'){this.pos+=2;if(this.p()==='['){const lv=this._ll();if(lv>=0){this._ls(lv);continue;}}while(this.pos<this.src.length&&this.p()!=='\n')this.pos++;}
-      else break;
-    }
-  }
+  sk(){while(this.pos<this.src.length){const c=this.p();if(' \t\r\n'.includes(c))this.a();else if(c==='-'&&this.p(1)==='-'){this.pos+=2;if(this.p()==='['){const lv=this._ll();if(lv>=0){this._ls(lv);continue;}}while(this.pos<this.src.length&&this.p()!=='\n')this.pos++;}else break;}}
   _ll(){let i=this.pos+1,lv=0;while(this.src[i]==='='){lv++;i++;}return this.src[i]==='['?lv:-1;}
   _ls(lv){this.pos+=lv+2;const cl=']'+'='.repeat(lv)+']';const idx=this.src.indexOf(cl,this.pos);if(idx<0)throw new Error('unfinished long string');const s=this.src.slice(this.pos,idx);this.line+=(s.match(/\n/g)||[]).length;this.pos=idx+cl.length;return s;}
   _str(q){this.pos++;let r='';while(this.pos<this.src.length){const c=this.src[this.pos];if(c===q){this.pos++;return r;}if(c==='\n')throw new Error('unfinished string');if(c==='\\'){this.pos++;const e=this.src[this.pos++];const M={a:'\x07',b:'\b',f:'\f',n:'\n',r:'\r',t:'\t',v:'\x0B','\\':'\\','\'':'\'','"':'"','\n':'\n'};if(M[e])r+=M[e];else if(e>='0'&&e<='9'){let n=e;for(let i=0;i<2&&this.src[this.pos]>='0'&&this.src[this.pos]<='9';i++)n+=this.src[this.pos++];r+=String.fromCharCode(parseInt(n));}else if(e==='x'){const h=this.src.slice(this.pos,this.pos+2);this.pos+=2;r+=String.fromCharCode(parseInt(h,16));}else r+=e;}else r+=this.src[this.pos++];}throw new Error('unfinished string');}
   _num(){let s=this.pos;if(this.src[this.pos]==='0'&&/[xX]/.test(this.src[this.pos+1])){this.pos+=2;while(/[0-9a-fA-F]/.test(this.src[this.pos]||''))this.pos++;}else{while(/[0-9]/.test(this.src[this.pos]||''))this.pos++;if(this.src[this.pos]==='.'&&/[0-9]/.test(this.src[this.pos+1]||'')){this.pos++;while(/[0-9]/.test(this.src[this.pos]||''))this.pos++;}if(/[eE]/.test(this.src[this.pos]||'')){this.pos++;if(/[+-]/.test(this.src[this.pos]||''))this.pos++;while(/[0-9]/.test(this.src[this.pos]||''))this.pos++;}}return this.src.slice(s,this.pos);}
-  _run(){
-    while(true){
-      this.sk();if(this.pos>=this.src.length){this.tokens.push({t:TK.EOF,v:'',ln:this.line});break;}
-      const ln=this.line,c=this.src[this.pos];
-      if(c==='['&&this._ll()>=0){const lv=this._ll();const s=this._ls(lv);this.tokens.push({t:TK.STRING,v:s,ln});continue;}
-      if(c==='"'||c==="'"){this.tokens.push({t:TK.STRING,v:this._str(c),ln});continue;}
-      if(/[0-9]/.test(c)||(c==='.'&&/[0-9]/.test(this.p(1)))){this.tokens.push({t:TK.NUMBER,v:this._num(),ln});continue;}
-      if(/[a-zA-Z_]/.test(c)){let n='';while(/[a-zA-Z0-9_]/.test(this.src[this.pos]||''))n+=this.src[this.pos++];this.tokens.push({t:KW.has(n)?n:TK.NAME,v:n,ln});continue;}
-      this.pos++;
-      if(c==='.'){if(this.m('.')){if(this.m('.'))this.tokens.push({t:TK.VARARG,v:'...',ln});else this.tokens.push({t:TK.CONCAT,v:'..',ln});}else this.tokens.push({t:TK.DOT,v:'.',ln});}
-      else if(c==='='){this.tokens.push({t:this.m('=')?TK.EQ:TK.ASSIGN,v:c,ln});}
-      else if(c==='<'){this.tokens.push({t:this.m('=')?TK.LE:TK.LT,v:c,ln});}
-      else if(c==='>'){this.tokens.push({t:this.m('=')?TK.GE:TK.GT,v:c,ln});}
-      else if(c==='~'){if(this.m('='))this.tokens.push({t:TK.NEQ,v:'~=',ln});else this.tokens.push({t:'TILDE',v:'~',ln});}
-      else if(c===':'){this.tokens.push({t:this.m(':')?TK.DCOLON:TK.COLON,v:c,ln});}
-      else{const M={'+':TK.PLUS,'-':TK.MINUS,'*':TK.STAR,'/':TK.SLASH,'%':TK.PERCENT,'^':TK.CARET,'#':TK.HASH,'(':TK.LPAREN,')':TK.RPAREN,'{':TK.LBRACE,'}':TK.RBRACE,'[':TK.LBRACKET,']':TK.RBRACKET,';':TK.SEMI,',':TK.COMMA};if(M[c])this.tokens.push({t:M[c],v:c,ln});}
-    }
-  }
+  _run(){while(true){this.sk();if(this.pos>=this.src.length){this.tokens.push({t:TK.EOF,v:'',ln:this.line});break;}const ln=this.line,c=this.src[this.pos];if(c==='['&&this._ll()>=0){const lv=this._ll();const s=this._ls(lv);this.tokens.push({t:TK.STRING,v:s,ln});continue;}if(c==='"'||c==="'"){this.tokens.push({t:TK.STRING,v:this._str(c),ln});continue;}if(/[0-9]/.test(c)||(c==='.'&&/[0-9]/.test(this.p(1)))){this.tokens.push({t:TK.NUMBER,v:this._num(),ln});continue;}if(/[a-zA-Z_]/.test(c)){let n='';while(/[a-zA-Z0-9_]/.test(this.src[this.pos]||''))n+=this.src[this.pos++];this.tokens.push({t:KW.has(n)?n:TK.NAME,v:n,ln});continue;}this.pos++;if(c==='.'){if(this.m('.')){if(this.m('.'))this.tokens.push({t:TK.VARARG,v:'...',ln});else this.tokens.push({t:TK.CONCAT,v:'..',ln});}else this.tokens.push({t:TK.DOT,v:'.',ln});}else if(c==='='){this.tokens.push({t:this.m('=')?TK.EQ:TK.ASSIGN,v:c,ln});}else if(c==='<'){this.tokens.push({t:this.m('=')?TK.LE:TK.LT,v:c,ln});}else if(c==='>'){this.tokens.push({t:this.m('=')?TK.GE:TK.GT,v:c,ln});}else if(c==='~'){if(this.m('='))this.tokens.push({t:TK.NEQ,v:'~=',ln});}else if(c===':'){this.tokens.push({t:this.m(':')?TK.DCOLON:TK.COLON,v:c,ln});}else{const M={'+':TK.PLUS,'-':TK.MINUS,'*':TK.STAR,'/':TK.SLASH,'%':TK.PERCENT,'^':TK.CARET,'#':TK.HASH,'(':TK.LPAREN,')':TK.RPAREN,'{':TK.LBRACE,'}':TK.RBRACE,'[':TK.LBRACKET,']':TK.RBRACKET,';':TK.SEMI,',':TK.COMMA};if(M[c])this.tokens.push({t:M[c],v:c,ln});}}}
 }
 class Proto{
-  constructor(parent=null){this.parent=parent;this.code=[];this.consts=[];this.protos=[];this.upvals=[];this.params=0;this.isVararg=false;this._reg=0;this._locals=[];}
-  aR(){return this._reg++;}
-  fR(n){this._reg-=n;}
+  constructor(p=null){this.parent=p;this.code=[];this.consts=[];this.protos=[];this.upvals=[];this.params=0;this.isVararg=false;this._reg=0;this._locals=[];}
+  aR(){return this._reg++;}fR(n){this._reg-=n;}
   aC(v){const i=this.consts.findIndex(c=>c===v&&typeof c===typeof v);if(i>=0)return i;this.consts.push(v);return this.consts.length-1;}
   cRK(v){return-1-this.aC(v);}
   e(op,a=0,b=0,c=0){this.code.push({op,a,b,c});return this.code.length-1;}
@@ -92,7 +55,7 @@ class Compiler{
   _sExpr(dest){const t=this.pk();if(t.t===TK.NUMBER){this.av();this.proto.e(OP.LOADK,dest,-1-this.proto.aC(parseFloat(t.v)),0);}else if(t.t===TK.STRING){this.av();this.proto.e(OP.LOADK,dest,-1-this.proto.aC(t.v),0);}else if(t.t==='true'){this.av();this.proto.e(OP.LOADBOOL,dest,1,0);}else if(t.t==='false'){this.av();this.proto.e(OP.LOADBOOL,dest,0,0);}else if(t.t==='nil'){this.av();this.proto.e(OP.LOADNIL,dest,dest,0);}else if(t.t===TK.VARARG){this.av();this.proto.e(OP.VARARG,dest,1,0);}else if(t.t==='function'){this.av();this._fnBody(dest);}else if(t.t===TK.LBRACE){this._tblCtor(dest);}else this._sfxExpr(dest);}
   _sfxExpr(dest){this._primExpr(dest);while(true){const t=this.pk().t;if(t===TK.DOT){this.av();const f=this._exp(TK.NAME).v;this.proto.e(OP.GETTABLE,dest,dest,this.proto.cRK(f));}else if(t===TK.LBRACKET){this.av();const kr=this.proto._reg++;this._expr(kr);this._exp(TK.RBRACKET);this.proto.e(OP.GETTABLE,dest,dest,kr);this.proto._reg--;}else if(t===TK.COLON){this.av();const m=this._exp(TK.NAME).v;this.proto.e(OP.SELF,dest,dest,this.proto.cRK(m));const ab=dest+2;this._cArgs(ab);const na=this.proto._reg-ab;this.proto.e(OP.CALL,dest,na+2,2);this.proto._reg=dest+1;}else if(t===TK.LPAREN||t===TK.STRING||t===TK.LBRACE){const ab=dest+1;this.proto._reg=ab;this._cArgs(ab);const na=this.proto._reg-ab;this.proto.e(OP.CALL,dest,na+1,2);this.proto._reg=dest+1;}else break;}}
   _cArgs(base){if(this.ck(TK.LPAREN)){this.av();if(!this.ck(TK.RPAREN))this._eList(base);this._exp(TK.RPAREN);}else if(this.ck(TK.STRING)){const t=this.av();this.proto.e(OP.LOADK,base,-1-this.proto.aC(t.v),0);this.proto._reg=base+1;}else if(this.ck(TK.LBRACE)){this._tblCtor(base);this.proto._reg=base+1;}}
-  _primExpr(dest){const t=this.pk();if(t.t===TK.NAME){this.av();const loc=this.proto.fL(t.v);if(loc>=0){if(loc!==dest)this.proto.e(OP.MOVE,dest,loc,0);}else{const uv=this.proto.fU(t.v);if(uv>=0)this.proto.e(OP.GETUPVAL,dest,uv,0);else{const k=this.proto.aC(t.v);this.proto.e(OP.GETGLOBAL,dest,k,0);}}}else if(t.t===TK.LPAREN){this.av();this._expr(dest);this._exp(TK.RPAREN);}}
+  _primExpr(dest){const t=this.pk();if(t.t===TK.NAME){this.av();const loc=this.proto.fL(t.v);if(loc>=0){if(loc!==dest)this.proto.e(OP.MOVE,dest,loc,0);}else{const uv=this.proto.fU(t.v);if(uv>=0)this.proto.e(OP.GETUPVAL,dest,uv,0);else this.proto.e(OP.GETGLOBAL,dest,this.proto.aC(t.v),0);}}else if(t.t===TK.LPAREN){this.av();this._expr(dest);this._exp(TK.RPAREN);}}
   _eList(base){this._expr(base);let n=1;while(this.mt(',')){ this.proto._reg=base+n;this._expr(base+n);n++;}this.proto._reg=base+n;return n;}
   _fnBody(dest){this._exp(TK.LPAREN);const sub=new Proto(this.proto);const sv=this.proto;this.proto=sub;while(!this.ck(TK.RPAREN)){if(this.ck(TK.VARARG)){this.av();sub.isVararg=true;break;}const n=this._exp(TK.NAME).v;sub.aL(n);sub.params++;if(!this.ck(TK.RPAREN))this._exp(',');}this._exp(TK.RPAREN);this._blk();this._exp('end');sub.e(OP.RETURN,0,1,0);this.proto=sv;const idx=sv.protos.length;sv.protos.push(sub);sv.e(OP.CLOSURE,dest,idx,0);}
   _tblCtor(dest){this._exp(TK.LBRACE);this.proto.e(OP.NEWTABLE,dest,0,0);let i=1;while(!this.ck(TK.RBRACE)){if(this.ck(TK.LBRACKET)){this.av();const kr=this.proto._reg++;this._expr(kr);this._exp(TK.RBRACKET);this._exp(TK.ASSIGN);const vr=this.proto._reg++;this._expr(vr);this.proto.e(OP.SETTABLE,dest,kr,vr);this.proto._reg-=2;}else if(this.pk().t===TK.NAME&&this.tokens[this.pos+1]?.t===TK.ASSIGN){const n=this.av().v;this.av();const vr=this.proto._reg++;this._expr(vr);this.proto.e(OP.SETTABLE,dest,this.proto.cRK(n),vr);this.proto._reg--;}else{const vr=this.proto._reg++;this._expr(vr);this.proto.e(OP.SETLIST,dest,i,vr);this.proto._reg--;i++;}this.mt(',');this.mt(';');}this._exp(TK.RBRACE);}
