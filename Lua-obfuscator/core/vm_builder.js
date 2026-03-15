@@ -105,14 +105,14 @@ class VMBuilder {
     L.push(`elseif ${opA}==${om.CALL} then`);
     L.push(`local _fn=${regA}[${aA}] local _args={}`);
     L.push(`for _i=1,${bA}-1 do _args[_i]=${regA}[${aA}+_i] end`);
-    L.push(`local _res={_fn(table.unpack(_args))}`);
+    L.push(`local _res={_fn((table and table.unpack or unpack)(_args))}`);
     L.push(`for _i=1,${cA}-1 do ${regA}[${aA}+_i-1]=_res[_i] end`);
     L.push(`${topA}=${aA}+(${cA}-1)`);
     L.push(`elseif ${opA}==${om.RETURN} then`);
     L.push(`local ${retA}={}`);
     L.push(`if ${bA}==0 then for _i=${aA},${topA} do ${retA}[#${retA}+1]=${regA}[_i] end`);
     L.push(`else for _i=0,${bA}-2 do ${retA}[#${retA}+1]=${regA}[${aA}+_i] end end`);
-    L.push(`return table.unpack(${retA})`);
+    L.push(`return (table and table.unpack or unpack)(${retA})`);
     L.push(`elseif ${opA}==${om.FORPREP} then`);
     L.push(`${regA}[${aA}]=${regA}[${aA}]-${regA}[${aA}+2] ${ipA}=${ipA}+${bA}`);
     L.push(`elseif ${opA}==${om.FORLOOP} then`);
